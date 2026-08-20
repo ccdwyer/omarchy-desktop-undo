@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
-import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
@@ -103,28 +102,46 @@ Item {
     return null
   }
 
+  // `omarchy-shell shell call <id> <method> <arg>` invokes methods on this
+  // overlay (the panel loader), not the service. Keep the service methods
+  // here so Super+Z and the bar chip reach the journal. Call QML methods by
+  // name — `svc[method]` does not see them.
   function callService(method, arg) {
     var payload = arg === undefined || arg === null ? "" : String(arg)
     var svc = root.serviceRef()
+    var fn = null
     if (svc) {
-      if (method === "undo" && typeof svc.undo === "function")
-        return svc.undo(payload)
-      if (method === "redo" && typeof svc.redo === "function")
-        return svc.redo(payload)
-      if (method === "scrubTo" && typeof svc.scrubTo === "function")
-        return svc.scrubTo(payload)
-      if (method === "commit" && typeof svc.commit === "function")
-        return svc.commit(payload)
-      if (method === "cancel" && typeof svc.cancel === "function")
-        return svc.cancel(payload)
-      if (method === "markFirstRun" && typeof svc.markFirstRun === "function")
-        return svc.markFirstRun(payload)
+      if (method === "undo") fn = svc.undo
+      else if (method === "redo") fn = svc.redo
+      else if (method === "scrubTo") fn = svc.scrubTo
+      else if (method === "commit") fn = svc.commit
+      else if (method === "cancel") fn = svc.cancel
+      else if (method === "markFirstRun") fn = svc.markFirstRun
+      else if (method === "status") fn = svc.status
+      else if (method === "journal") fn = svc.journal
+      else if (method === "ping") fn = svc.ping
     }
-    var cmd = ["omarchy-shell", "shell", "call", root.pluginId, method, payload]
-    ipcProc.command = cmd
-    ipcProc.running = true
+    if (typeof fn === "function") {
+      try {
+        var result = fn(payload)
+        return result === undefined || result === null ? "ok" : String(result)
+      } catch (e) {
+        console.warn("desktop-undo overlay service call failed", method, e)
+        return "error"
+      }
+    }
+    Quickshell.execDetached(["omarchy-shell", root.pluginId, method, payload])
     return "queued"
   }
+
+  function undo(arg) { return root.callService("undo", arg) }
+  function redo(arg) { return root.callService("redo", arg) }
+  function scrubTo(arg) { return root.callService("scrubTo", arg) }
+  function commit(arg) { return root.callService("commit", arg) }
+  function cancel(arg) { return root.callService("cancel", arg) }
+  function ping(arg) { return "ok" }
+  function status(arg) { return root.callService("status", arg) }
+  function journal(arg) { return root.callService("journal", arg) }
 
   function refresh() {
     var snap = Journal.snapshot()
@@ -188,11 +205,6 @@ Item {
     root.pendingDismiss = true
     root.callService("cancel", "")
     Qt.callLater(root.refresh)
-  }
-
-  Process {
-    id: ipcProc
-    running: false
   }
 
   Timer {

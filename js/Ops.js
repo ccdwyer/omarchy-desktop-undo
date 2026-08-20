@@ -223,6 +223,82 @@ function dispatchString(step) {
     return step.dispatcher + " " + step.arg
 }
 
+function luaString(value) {
+    return '"' + String(value)
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, "\\n")
+        .replace(/\r/g, "\\r") + '"'
+}
+
+function addressFromArg(arg) {
+    var m = String(arg || "").match(/address:0x[0-9a-fA-F]+/)
+    return m ? m[0] : ""
+}
+
+function luaWindowOpt(arg) {
+    var a = addressFromArg(arg)
+    if (!a)
+        return ""
+    return ", window = " + luaString(a)
+}
+
+function luaExecCmd(cmd, workspace) {
+    var extra = ""
+    if (workspace !== undefined && workspace !== null && String(workspace).length)
+        extra = ", { workspace = " + luaString(String(workspace)) + " }"
+    return "hl.dsp.exec_cmd(" + luaString(cmd) + extra + ")"
+}
+
+// Hyprland 0.55+ wraps `hyprctl dispatch <expr>` as hl.dispatch(<expr>).
+// Classic dispatcher names (`movewindowpixel exact ...`) are a Lua syntax
+// error (exit 7). Emit hl.dsp.* tables instead.
+function luaDispatch(step) {
+    if (!step || !step.dispatcher)
+        return ""
+    var d = step.dispatcher
+    var arg = String(step.arg || "")
+    var win = luaWindowOpt(arg)
+    var m
+
+    if (d === "movewindowpixel") {
+        m = arg.match(/^exact\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/)
+        if (!m)
+            return ""
+        return "hl.dsp.window.move({ x = " + m[1] + ", y = " + m[2] + ", relative = false" + win + " })"
+    }
+    if (d === "resizewindowpixel") {
+        m = arg.match(/^exact\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/)
+        if (!m)
+            return ""
+        return "hl.dsp.window.resize({ x = " + m[1] + ", y = " + m[2] + ", relative = false" + win + " })"
+    }
+    if (d === "movetoworkspacesilent") {
+        m = arg.match(/^([^,]+)/)
+        var ws = m ? m[1] : "1"
+        return "hl.dsp.window.move({ workspace = " + luaString(ws) + ", follow = false" + win + " })"
+    }
+    if (d === "setfloating")
+        return "hl.dsp.window.float({ action = \"enable\"" + win + " })"
+    if (d === "settiled")
+        return "hl.dsp.window.float({ action = \"disable\"" + win + " })"
+    if (d === "fullscreenstate") {
+        m = arg.match(/^(-?\d+)\s+(-?\d+)/)
+        if (!m)
+            return ""
+        return "hl.dsp.window.fullscreen_state({ internal = " + m[1] + ", client = " + m[2] + ", action = \"set\"" + win + " })"
+    }
+    if (d === "closewindow") {
+        var addr = addressFromArg(arg)
+        if (!addr)
+            return ""
+        return "hl.dsp.window.close({ window = " + luaString(addr) + " })"
+    }
+    if (d === "exec")
+        return luaExecCmd(arg, step.workspace)
+    return ""
+}
+
 function clientsMatch(snapshot, expect) {
     if (!expect || !snapshot)
         return false
