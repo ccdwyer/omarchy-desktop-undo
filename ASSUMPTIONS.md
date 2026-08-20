@@ -1,31 +1,41 @@
 # Assumptions
 
-Conservative choices where the Omarchy / Quickshell / Hyprland API was not 100% certain. The rule: isolate the uncertainty behind a small adapter, prefer documented types (`Process`, `Socket`, `FileView`, `Hyprland`, `IpcHandler`, `PanelWindow`), and degrade.
+Conservative choices where the Omarchy / Quickshell / Hyprland API was not 100% certain. Authoritative platform contract: `docs/quattro-shell-reference.md`. Prefer documented types (`Process`, `Socket`, `FileView`, `Hyprland`, `IpcHandler`, `PanelWindow`) and degrade.
 
-## Plugin host
+## Plugin host (from the Quattro reference)
 
-- **Entry points are `Item`s**, not `ShellRoot`. Overlay exposes `open(payloadJson)` and `close()` for `omarchy-shell shell summon` / `hide`. Taken from `docs/omarchy-shell.md` and the clipboard overlay.
-- **Injected properties** on load: `omarchyPath`, `shell`, `manifest`, `pluginRegistry` (and `bar` / `barWidgetRegistry` on bar widgets). Documented. Overlay and BarWidget still function if some of these are missing.
-- **`keepLoaded: true`** so the overlay's layer-shell window can survive between summons, matching `omarchy.image-picker` / clipboard.
-- **Third-party service lookup is not first-party `shell.firstPartyServiceFor`.** Bar/overlay try, in order: `pluginRegistry.serviceFor`, `shell.serviceFor`, `shell.firstPartyServiceFor`, then `omarchy-shell shell call` / `shell.summon`. Display state is also shared via `.pragma library` JS (`js/Journal.js`) in the same engine, plus the persisted JSON file.
-- **IPC verb** is `omarchy-shell shell call <id> <method> <arg>` and `shell summon <id> <payloadJson>`. Confirmed in `docs/omarchy-shell.md`. README keybinds use that; we do not write `hyprland.conf`.
-- **`IpcHandler` target** is the plugin id. First-party plugins use short names (`media`, `omarchy.clock`). A unique id avoids collisions. `shell call` is the primary path; IpcHandler is extra.
+- **Entry points are QML files named in `entryPoints`.** Overlay/panel kinds are opened with `omarchy-shell shell summon <id> <payloadJson>` and closed with `shell hide <id>`. Overlay `open(payloadJson)` / `close()` match that IPC.
+- **`keepLoaded: true`** is a documented top-level manifest key so an overlay can stay mounted between summons.
+- **Settings are inline on the `shell.json` entry.** No `config:` sub-object, no per-plugin settings file. Defaults and schema are declared in `manifest.json` (`defaults` / `schema`, and the same keys under `barWidget` for the chip). The service reads the injected `settings` object and same-named properties; the bar widget uses `setting(key, fallback)` when the BarWidget base provides it, else `settings`.
+- **`omarchy-shell shell call <id> <method> <arg>`** calls a method on an already-loaded plugin. The `<arg>` argument is required; methods accept a string and ignore it when unused. `summon` loads+opens a panel/overlay — it does not invoke an arbitrary method.
+- **`IpcHandler` target** is the plugin id so `call` and `qs ipc` share one name. This is extra surface, not a substitute for `shell call`.
+
+## What the reference does **not** establish
+
+The following were used only as optional in-process shortcuts, never as documented API:
+
+- `shell.serviceFor` / `shell.firstPartyServiceFor` / `pluginRegistry.serviceFor`
+- `shell.call` / `shell.summon` as QML methods on the injected `shell` object
+
+When those are missing, overlay and bar chip go through `omarchy-shell shell call|summon` with a full argv. Journal display is shared via `.pragma library` JS in the same engine plus `journal.json`.
+
+Injected properties such as `omarchyPath`, `shell`, `manifest`, `pluginRegistry`, and `settings` are assumed by analogy with first-party plugins; every read is guarded.
 
 ## Quickshell
 
 - **`Hyprland.rawEvent`** is the documented socket2 feed (`event.name`, `event.data`). Used as the primary event source.
-- **`Socket { path; connected }`** is opened only as a fallback if `Hyprland.rawEvent` has not fired within 2s. Connecting both would double-record (Hyprland already holds socket2). Socket's `parser` property is **not** used — it is not documented as clearly as Process `stdout: SplitParser`, and a missing property would fail the whole Service at load. If `rawEvent` is silent, `hyprctl -j clients` diffs on the poll timer still derive close/open/workspace/float/fullscreen/geometry (events are triggers; diffs are truth). Recorded so a later spike can attach a SplitParser if the build exposes it.
-- **`Hyprland.dispatch(request)`** is used for mutations (same dispatcher string as `hyprctl dispatch`). Spec says `hyprctl dispatch`; if `dispatch` throws, we fall back to a `Process` of `hyprctl`. Both talk to the compositor — never a private API.
+- **`Socket` fallback** connects only if `rawEvent` has not fired within 2s, so the two feeds do not double-record. Lines are read with `parser: SplitParser { onRead }` into `handleLine`. If `rawEvent` is silent, `hyprctl -j clients` diffs on the poll timer still derive actions (events are triggers; diffs are truth).
+- **`Hyprland.dispatch(request)`** is used for mutations (same dispatcher string as `hyprctl dispatch`). If `dispatch` throws, a `Process` of `hyprctl` is the fallback. Never a private compositor API.
 - **`Hyprland.eventSocketPath`** is preferred when building the Socket path; otherwise `$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock`.
-- **Geometry signals.** `HyprlandToplevel` documents `address`, `title`, `workspace`, `lastIpcObject` — **not** dedicated `x`/`y`/`size` properties. `lastIpcObject` only updates after `refreshToplevels()`. So drag detection is **not** property-change handlers; it is a `hyprctl -j clients` poll (250ms while geometry is in flux, 1s idle) plus a 150ms end-of-drag debounce. Quickshell does not document compositor pointer-button state, so "while buttons are down" is approximated by "geometry still changing".
-- **`image://icon/<appId>`** for overlay cards. If the image provider is absent, the card shows the action glyph instead (`Image.status !== Ready`).
+- **Geometry signals.** `HyprlandToplevel` documents `address`, `title`, `workspace`, `lastIpcObject` — not dedicated `x`/`y`/`size` properties. Drag detection is a `hyprctl -j clients` poll (250ms while geometry is in flux, 1s idle) plus a 150ms end-of-drag debounce. The first `before` of a drag is frozen; only `after` updates until debounce. Quickshell does not document compositor pointer-button state, so "buttons down" is approximated by "geometry still changing".
+- **`image://icon/<appId>`** for overlay cards. If the provider is absent, the card shows the action glyph (`Image.status !== Ready`).
 - **Theme tokens** `Color.menu.*`, `Color.accent`, `Style.*`, `Border.*`, `WidgetButton`, `BarWidget`, `BorderSurface`, `PanelWindow`, `WlrLayershell` — copied from first-party clipboard / clock / media. Reduced motion: `Style.reduceMotion` if present, else `OMARCHY_REDUCED_MOTION=1`.
 - **`.pragma library` JS** is shared across Service, Overlay, and BarWidget in one engine. Tests strip the pragma and eval under Node.
 
 ## Hyprland
 
 - Socket2 events and payloads are taken from the 2026-08-18 wiki: `openwindow`, `closewindow`, `movewindow`/`movewindowv2`, `changefloatingmode`, `fullscreen` (payload `0/1`, **no address**). Address for fullscreen is resolved via `activewindowv2` + a clients-j diff.
-- There is **no** drag/resize socket2 event. Confirmed by the tribunal applied-changes section.
+- There is **no** drag/resize socket2 event.
 - Inverse dispatchers:
   - `movewindowpixel exact X Y,address:0x…`
   - `resizewindowpixel exact W H,address:0x…`
@@ -34,14 +44,15 @@ Conservative choices where the Omarchy / Quickshell / Hyprland API was not 100% 
   - `fullscreenstate <internal> <client>,address:0x…` (0 none / 1 maximize / 2 fullscreen / 3 both)
   - `exec [workspace N silent] …`
   - redo of a close uses `closewindow address:0x…`
+- Close-undo restoration (workspace / float / geometry) is **not** queued against the closed address. It is enqueued only after cookie-match (or pid→address lookup) yields a live client.
 - `hyprctl -j version` and `hyprctl -j clients` exist. Version is stored for logs; unknown socket2 events are logged and skipped.
 - Address spelling is normalized to lowercase `0x…`.
 
 ## Helper
 
-- Spec said "small shell script"; the competition brief also asked for a helper **binary** with `build.sh` and a missing-binary fallback. Both ship: Rust `src/undo-probe` → `bin/undo-probe`, POSIX `compat/undo-probe.sh`.
+- `compat/undo-probe.sh` is the default path (zero-setup). `build.sh` may compile Rust `bin/undo-probe`; QML uses the binary only when it is executable.
 - Probe never persists `environ`. Cookie matching reads it at runtime from `/proc/<pid>/environ` and drops it.
-- `FileView.setText` does not document mode 0600, so after each save we run `undo-probe secure <path>` (chmod 0600, parent 0700).
+- `FileView.setText` does not document mode 0600, so after each journal save we run `undo-probe secure <path>` (chmod 0600, parent 0700). The state dir holds `journal.json` only.
 
 ## Out of scope (intentional)
 

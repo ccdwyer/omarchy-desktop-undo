@@ -183,11 +183,6 @@ cmd_init_state() {
     printf '%s\n' '{"version":1,"cursor":0,"entries":[]}' > "$journal"
   fi
   chmod 600 "$journal" 2>/dev/null || true
-  config="$dir/config.json"
-  if [ ! -f "$config" ]; then
-    printf '%s\n' '{"version":1,"hideChipAtZero":true,"firstRunShown":false,"extraExclusions":[]}' > "$config"
-    chmod 600 "$config" 2>/dev/null || true
-  fi
   printf '{"ok":true,"dir":"%s"}\n' "$(json_escape "$dir")"
 }
 

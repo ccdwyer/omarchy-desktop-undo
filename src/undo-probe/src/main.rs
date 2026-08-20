@@ -131,15 +131,6 @@ fn cmd_init_state(args: &[String]) -> Result<String, ProbeError> {
         fs::write(&journal, "{\"version\":1,\"cursor\":0,\"entries\":[]}\n").map_err(ProbeError::Io)?;
     }
     set_mode(&journal, 0o600)?;
-    let config = dir.join("config.json");
-    if !config.exists() {
-        fs::write(
-            &config,
-            "{\n  \"version\": 1,\n  \"hideChipAtZero\": true,\n  \"firstRunShown\": false,\n  \"extraExclusions\": []\n}\n",
-        )
-        .map_err(ProbeError::Io)?;
-        set_mode(&config, 0o600)?;
-    }
     Ok(format!(
         "{{\"ok\":true,\"dir\":{}}}",
         json_escape(&dir.to_string_lossy())

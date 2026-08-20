@@ -140,3 +140,21 @@ function shouldSuppressRecord(state, parsed, matchFn) {
         return true
     return false
 }
+
+function retarget(state, oldAddr, newAddr, rewriteFn) {
+    if (!state || !oldAddr || !newAddr)
+        return 0
+    var n = 0
+    function apply(step) {
+        if (!step || !rewriteFn)
+            return
+        rewriteFn(step, oldAddr, newAddr)
+        n += 1
+    }
+    if (state.pending)
+        apply(state.pending.step)
+    var q = state.queue || []
+    for (var i = 0; i < q.length; i++)
+        apply(q[i].step)
+    return n
+}

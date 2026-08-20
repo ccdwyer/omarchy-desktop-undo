@@ -16,6 +16,9 @@ Item {
   property var shell: null
   property var manifest: null
   property var pluginRegistry: null
+  property var settings: ({})
+  property bool hideChipAtZero: true
+  property string extraExclusions: ""
   property string omarchyPath: Quickshell.env("OMARCHY_PATH") || ""
 
   readonly property string pluginId: "io.github.chris.desktop-undo"
@@ -35,7 +38,6 @@ Item {
     return home + "/.local/state/desktop-undo"
   }
   readonly property string journalPath: stateHome + "/journal.json"
-  readonly property string configPath: stateHome + "/config.json"
   readonly property string probeBin: pluginDir + "/bin/undo-probe"
   readonly property string probeSh: pluginDir + "/compat/undo-probe.sh"
 
@@ -56,6 +58,8 @@ Item {
   property bool dragging: false
   property bool hydrating: true
   property bool journalLoaded: false
+  property int bootProbesLeft: 0
+  property var bootBuffer: []
   property string lastStatus: "starting"
   property int journalRevision: 0
   property int journalDepth: 0
@@ -89,6 +93,33 @@ Item {
       return root.probeBin
     return root.probeSh
   }
+
+  function hostSettings() {
+    var s = {
+      hideChipAtZero: root.hideChipAtZero,
+      extraExclusions: root.extraExclusions
+    }
+    var injected = root.settings
+    if (injected && typeof injected === "object") {
+      if (injected.hideChipAtZero !== undefined)
+        s.hideChipAtZero = injected.hideChipAtZero
+      if (injected.extraExclusions !== undefined)
+        s.extraExclusions = injected.extraExclusions
+    }
+    return s
+  }
+
+  function exclusions() {
+    return Config.extraExclusionsFrom(root.hostSettings())
+  }
+
+  function applyHostSettings() {
+    root.hideChipAtZero = Config.hideChipAtZeroFrom(root.hostSettings())
+    var raw = Config.read(root.hostSettings(), "extraExclusions", "")
+    root.extraExclusions = typeof raw === "string" ? raw : (raw && raw.length ? raw.join(",") : "")
+  }
+
+  onSettingsChanged: root.applyHostSettings()
 
   function summonOverlay(payload) {
     var body = payload || "{}"
@@ -145,7 +176,12 @@ Item {
 
     if (reason === "boot") {
       root.lastStableClients = clients
-      root.hydrating = false
+      root.seedOpenCache(clients)
+      return
+    }
+
+    if (root.hydrating) {
+      root.bootBuffer.push({ reason: reason, trigger: trigger || {}, previous: previous, clients: clients })
       return
     }
 
@@ -179,7 +215,8 @@ Item {
       if (actions[i].type === "move" || actions[i].type === "resize") {
         if (actions[i].floating || (actions[i].before && actions[i].before.floating)) {
           dirty = true
-          root.dragDirty[actions[i].address] = actions[i]
+          var addr = actions[i].address
+          root.dragDirty[addr] = Diff.coalesceDrag(root.dragDirty[addr], actions[i])
         }
       }
     }
@@ -204,7 +241,7 @@ Item {
       }
       if (Executor.isBusy(root.tx) && !root.scrubbing)
         continue
-      if (!Ops.shouldRecord(action, Apps, Config.extraExclusions))
+      if (!Ops.shouldRecord(action, Apps, root.exclusions()))
         continue
       root.recordAction(action)
     }
@@ -225,10 +262,61 @@ Item {
     cache[action.address] = rec
     root.openCache = cache
     if (pid > 0)
-      root.probePid(pid, action.address)
+      root.probePid(pid, action.address, false)
   }
 
-  function probePid(pid, address) {
+  function seedOpenCache(clients) {
+    var cache = {}
+    var probes = 0
+    var list = clients || []
+    for (var i = 0; i < list.length; i++) {
+      var st = Diff.captureState(list[i])
+      if (!st || !st.address)
+        continue
+      cache[st.address] = {
+        address: st.address,
+        appId: st.appId,
+        title: st.title,
+        pid: st.pid,
+        state: st,
+        relaunch: null
+      }
+      if (st.pid > 0) {
+        probes += 1
+        root.probePid(st.pid, st.address, true)
+      }
+    }
+    root.openCache = cache
+    root.bootProbesLeft = probes
+    if (probes === 0)
+      root.finishBoot()
+    else
+      bootTimeout.restart()
+  }
+
+  function finishBoot() {
+    if (!root.hydrating)
+      return
+    root.hydrating = false
+    bootTimeout.stop()
+    var buffered = root.bootBuffer
+    root.bootBuffer = []
+    for (var i = 0; i < buffered.length; i++) {
+      var item = buffered[i]
+      if (item.reason === "event")
+        root.ingestActions(Diff.diff(item.previous, item.clients, item.trigger), item.trigger, item.previous, item.clients)
+      else if (item.reason === "poll") {
+        root.trackGeometry(item.previous, item.clients)
+        if (!root.hyprlandEventsLive) {
+          var polled = Diff.diff(item.previous, item.clients, { name: "poll-state" })
+          root.ingestActions(polled, { name: "poll-state" }, item.previous, item.clients)
+        }
+      }
+    }
+    root.lastStatus = "ready"
+  }
+
+  function probePid(pid, address, boot) {
     enqueueWork([root.probeCommand(), "pid", String(pid)], function(text) {
       var info = null
       try {
@@ -236,21 +324,26 @@ Item {
       } catch (e) {
         info = null
       }
-      if (!info || !info.ok)
-        return
-      var rec = root.openCache[address]
-      if (!rec)
-        return
-      rec.relaunch = {
-        cwd: info.cwd || "",
-        argv: info.windowArgv && info.windowArgv.length ? info.windowArgv : (info.argv || []),
-        cmdline: info.windowCmdline || info.cmdline || "",
-        shellPid: info.shellPid || pid,
-        windowPid: pid
+      if (info && info.ok) {
+        var rec = root.openCache[address]
+        if (rec) {
+          rec.relaunch = {
+            cwd: info.cwd || "",
+            argv: info.windowArgv && info.windowArgv.length ? info.windowArgv : (info.argv || []),
+            cmdline: info.windowCmdline || info.cmdline || "",
+            shellPid: info.shellPid || pid,
+            windowPid: pid
+          }
+          var cache = root.openCache
+          cache[address] = rec
+          root.openCache = cache
+        }
       }
-      var cache = root.openCache
-      cache[address] = rec
-      root.openCache = cache
+      if (boot) {
+        root.bootProbesLeft = Math.max(0, root.bootProbesLeft - 1)
+        if (root.bootProbesLeft === 0)
+          root.finishBoot()
+      }
     })
   }
 
@@ -374,11 +467,33 @@ Item {
       appId: entry.appId,
       oldAddress: entry.address,
       entryId: entry.id,
+      entry: entry,
       deadline: Date.now() + 5000,
       pids: []
     }
     dispatchHypr("exec " + cmd)
     cookieTimer.restart()
+  }
+
+  function finishRelaunch(newAddress, pid) {
+    var pending = root.pendingRelaunch
+    if (!pending)
+      return
+    var live = String(newAddress || "")
+    if (!live && pid)
+      live = Diff.addressForPid(root.lastClients, pid)
+    if (live && pending.oldAddress && live !== pending.oldAddress) {
+      Journal.replaceAddress(pending.oldAddress, live)
+      Executor.retarget(root.tx, pending.oldAddress, live, Ops.rewriteAddress)
+    }
+    var entry = pending.entry
+    root.pendingRelaunch = null
+    cookieTimer.stop()
+    if (root.tx.pending && root.tx.pending.step && root.tx.pending.step.kind === "relaunch")
+      Executor.completePending(root.tx, "event")
+    if (entry && live && !entry.multiWindow)
+      Executor.enqueue(root.tx, Ops.closeRestoreSteps(entry, live), { entry: entry, direction: "undo" })
+    root.kickExecutor()
   }
 
   function maybeMatchCookie(action) {
@@ -400,13 +515,7 @@ Item {
       }
       if (!info || !info.found)
         return
-      if (action.address && pending.oldAddress && action.address !== pending.oldAddress)
-        Journal.replaceAddress(pending.oldAddress, action.address)
-      root.pendingRelaunch = null
-      cookieTimer.stop()
-      if (root.tx.pending && root.tx.pending.step && root.tx.pending.step.kind === "relaunch")
-        Executor.completePending(root.tx, "event")
-      root.kickExecutor()
+      root.finishRelaunch(action.address, info.pid || pid)
     })
   }
 
@@ -496,7 +605,6 @@ Item {
     if (root.hydrating)
       return
     journalFile.setText(Journal.serialize() + "\n")
-    configFile.setText(Config.serialize() + "\n")
     enqueueWork([root.probeCommand(), "secure", root.journalPath], null)
   }
 
@@ -516,17 +624,17 @@ Item {
     })
   }
 
-  function undo() { return root.runUndo() }
-  function redo() { return root.runRedo() }
-  function scrubTo(index) { return root.runScrubTo(index) }
-  function commit() { return root.commitScrub() }
-  function cancel() { return root.cancelScrub() }
-  function openTimeline() { return root.summonOverlay("{}") }
-  function ping() { return "ok" }
-  function status() { return root.statusJson() }
-  function journalJson() { return Journal.serialize() }
-  function markFirstRun() {
-    Config.markFirstRunShown()
+  function undo(arg) { return root.runUndo() }
+  function redo(arg) { return root.runRedo() }
+  function scrubTo(arg) { return root.runScrubTo(Number(arg)) }
+  function commit(arg) { return root.commitScrub() }
+  function cancel(arg) { return root.cancelScrub() }
+  function openTimeline(arg) { return root.summonOverlay("{}") }
+  function ping(arg) { return "ok" }
+  function status(arg) { return root.statusJson() }
+  function journalJson(arg) { return Journal.serialize() }
+  function markFirstRun(arg) {
+    Journal.markFirstRunShown()
     persistTimer.restart()
     return "ok"
   }
@@ -588,7 +696,6 @@ Item {
         root.probeReady = true
         enqueueWork([root.probeCommand(), "init-state", root.stateHome], function() {
           journalFile.reload()
-          configFile.reload()
         })
       }
     }
@@ -610,6 +717,13 @@ Item {
     // Stay disconnected while Hyprland.rawEvent is alive so we do not
     // double-record. Fallback timer below opens this if rawEvent never fires.
     connected: false
+    parser: SplitParser {
+      onRead: function(data) {
+        if (root.hyprlandEventsLive)
+          return
+        root.handleLine(data)
+      }
+    }
     onConnectedChanged: {
       if (connected) {
         root.socketBackoffMs = 250
@@ -757,13 +871,19 @@ Item {
         } catch (e) {
           return
         }
-        if (info && info.found) {
-          root.pendingRelaunch = null
-          cookieTimer.stop()
-          if (root.tx.pending && root.tx.pending.step && root.tx.pending.step.kind === "relaunch")
-            Executor.completePending(root.tx, "event")
-          root.kickExecutor()
+        if (!info || !info.found)
+          return
+        var live = Diff.addressForPid(root.lastClients, info.pid)
+        if (live) {
+          root.finishRelaunch(live, info.pid)
+          return
         }
+        enqueueWork(["hyprctl", "-j", "clients"], function(raw) {
+          var clients = Diff.parseClients(raw)
+          if (clients && clients.length)
+            root.lastClients = clients
+          root.finishRelaunch(Diff.addressForPid(root.lastClients, info.pid), info.pid)
+        })
       })
     }
   }
@@ -777,45 +897,40 @@ Item {
     onLoaded: {
       Journal.load(text())
       root.journalLoaded = true
-      root.hydrating = false
       root.publish()
     }
     onLoadFailed: {
       root.journalLoaded = true
-      root.hydrating = false
       root.publish()
     }
     onSaved: enqueueWork([root.probeCommand(), "secure", root.journalPath], null)
   }
 
-  FileView {
-    id: configFile
-    path: root.configPath
-    atomicWrites: true
-    printErrors: false
-    watchChanges: true
-    onLoaded: Config.load(text())
-    onLoadFailed: Config.load("{}")
-    onFileChanged: reload()
+  Timer {
+    id: bootTimeout
+    interval: 1500
+    repeat: false
+    onTriggered: root.finishBoot()
   }
 
   IpcHandler {
     target: "io.github.chris.desktop-undo"
 
-    function undo(): string { return root.runUndo() }
-    function redo(): string { return root.runRedo() }
-    function scrubTo(index: int): string { return root.runScrubTo(index) }
-    function commit(): string { return root.commitScrub() }
-    function cancel(): string { return root.cancelScrub() }
-    function openTimeline(): string { return root.summonOverlay("{}") }
-    function summon(): string { return root.summonOverlay("{}") }
-    function ping(): string { return "ok" }
-    function status(): string { return root.statusJson() }
-    function journal(): string { return Journal.serialize() }
-    function markFirstRun(): string { return root.markFirstRun() }
+    function undo(arg: string): string { return root.runUndo() }
+    function redo(arg: string): string { return root.runRedo() }
+    function scrubTo(arg: string): string { return root.runScrubTo(Number(arg)) }
+    function commit(arg: string): string { return root.commitScrub() }
+    function cancel(arg: string): string { return root.cancelScrub() }
+    function openTimeline(arg: string): string { return root.summonOverlay("{}") }
+    function summon(arg: string): string { return root.summonOverlay("{}") }
+    function ping(arg: string): string { return "ok" }
+    function status(arg: string): string { return root.statusJson() }
+    function journal(arg: string): string { return Journal.serialize() }
+    function markFirstRun(arg: string): string { return root.markFirstRun(arg) }
   }
 
   Component.onCompleted: {
+    root.applyHostSettings()
     probeWhichProc.running = true
     versionProc.running = true
     Qt.callLater(function() { root.requestClients("boot", {}) })

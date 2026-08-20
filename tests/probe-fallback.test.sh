@@ -28,5 +28,6 @@ printf '%s\n' "$out" | grep -q '/home/chris/projects/demo' || { echo "expected d
 mkdir -p "$FAKE/state"
 sh "$ROOT/compat/undo-probe.sh" init-state "$FAKE/state" >/dev/null
 [ -f "$FAKE/state/journal.json" ] || { echo "journal not created"; exit 1; }
+[ ! -f "$FAKE/state/config.json" ] || { echo "config.json must not be created"; exit 1; }
 
 echo "ok  probe-fallback"

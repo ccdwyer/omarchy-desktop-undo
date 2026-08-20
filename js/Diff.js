@@ -116,7 +116,53 @@ function parseClients(raw) {
 }
 
 function samePoint(a, b) {
+    if (!a || !b)
+        return false
     return a.x === b.x && a.y === b.y
+}
+
+function addressForPid(clients, pid) {
+    var want = Number(pid) || 0
+    if (!want)
+        return ""
+    var list = clients || []
+    for (var i = 0; i < list.length; i++) {
+        if (Number(list[i].pid) === want)
+            return normalizeAddress(list[i].address)
+    }
+    return ""
+}
+
+function coalesceDrag(existing, action) {
+    if (!action)
+        return existing || null
+    if (!existing) {
+        return {
+            type: action.type,
+            address: action.address,
+            appId: action.appId,
+            title: action.title,
+            before: action.before,
+            after: action.after,
+            floating: !!action.floating || !!(action.before && action.before.floating)
+        }
+    }
+    var before = existing.before
+    var after = action.after
+    var moved = before && after && (before.x !== after.x || before.y !== after.y)
+    var resized = before && after && (before.w !== after.w || before.h !== after.h)
+    var type = "move"
+    if (resized && !moved)
+        type = "resize"
+    return {
+        type: type,
+        address: existing.address || action.address,
+        appId: action.appId || existing.appId,
+        title: action.title || existing.title,
+        before: before,
+        after: after,
+        floating: !!(existing.floating || action.floating || (before && before.floating) || (after && after.floating))
+    }
 }
 
 function sameSize(a, b) {

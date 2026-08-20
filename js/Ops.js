@@ -38,6 +38,9 @@ function inverseSteps(entry) {
     var steps = []
 
     if (type === "close") {
+        // Restoration steps are deferred until cookie-match yields a live
+        // address. Queuing them here would dispatch against the closed
+        // window's obsolete handle.
         steps.push({
             kind: "relaunch",
             dispatcher: "exec",
@@ -46,40 +49,8 @@ function inverseSteps(entry) {
                 className: entry.appId
             },
             timeoutMs: 5000,
-            thenGeometry: !entry.multiWindow
+            restoreAfter: !entry.multiWindow
         })
-        if (!entry.multiWindow) {
-            steps.push({
-                kind: "workspace",
-                dispatcher: "movetoworkspacesilent",
-                arg: String(workspaceOf(before)) + "," + quoteAddress(address),
-                expect: { name: "movewindowv2", address: address },
-                optionalAddress: true
-            })
-            if (before.floating) {
-                steps.push({
-                    kind: "float",
-                    dispatcher: "setfloating",
-                    arg: quoteAddress(address),
-                    expect: { name: "changefloatingmode", address: address, floating: 1 },
-                    optionalAddress: true
-                })
-                steps.push({
-                    kind: "move",
-                    dispatcher: "movewindowpixel",
-                    arg: "exact " + Number(before.x || 0) + " " + Number(before.y || 0) + "," + quoteAddress(address),
-                    expectClients: { address: address, x: before.x, y: before.y },
-                    optionalAddress: true
-                })
-                steps.push({
-                    kind: "resize",
-                    dispatcher: "resizewindowpixel",
-                    arg: "exact " + Number(before.w || 0) + " " + Number(before.h || 0) + "," + quoteAddress(address),
-                    expectClients: { address: address, w: before.w, h: before.h },
-                    optionalAddress: true
-                })
-            }
-        }
         return steps
     }
 
@@ -163,6 +134,60 @@ function inverseSteps(entry) {
     }
 
     return []
+}
+
+function closeRestoreSteps(entry, liveAddress) {
+    var address = String(liveAddress || "")
+    if (!entry || !address || entry.multiWindow)
+        return []
+    var before = entry.before || {}
+    var steps = []
+    steps.push({
+        kind: "workspace",
+        dispatcher: "movetoworkspacesilent",
+        arg: String(workspaceOf(before)) + "," + quoteAddress(address),
+        expect: { name: "movewindowv2", address: address }
+    })
+    if (before.floating) {
+        steps.push({
+            kind: "float",
+            dispatcher: "setfloating",
+            arg: quoteAddress(address),
+            expect: { name: "changefloatingmode", address: address, floating: 1 }
+        })
+        steps.push({
+            kind: "move",
+            dispatcher: "movewindowpixel",
+            arg: "exact " + Number(before.x || 0) + " " + Number(before.y || 0) + "," + quoteAddress(address),
+            expectClients: { address: address, x: before.x, y: before.y }
+        })
+        steps.push({
+            kind: "resize",
+            dispatcher: "resizewindowpixel",
+            arg: "exact " + Number(before.w || 0) + " " + Number(before.h || 0) + "," + quoteAddress(address),
+            expectClients: { address: address, w: before.w, h: before.h }
+        })
+    }
+    return steps
+}
+
+function rewriteAddress(step, oldAddr, newAddr) {
+    if (!step || !oldAddr || !newAddr)
+        return step
+    var old = String(oldAddr)
+    var next = String(newAddr)
+    function swap(value) {
+        if (value === undefined || value === null)
+            return value
+        return String(value).split(old).join(next)
+    }
+    if (step.arg)
+        step.arg = swap(step.arg)
+    if (step.expect && step.expect.address)
+        step.expect.address = swap(step.expect.address)
+    if (step.expectClients && step.expectClients.address)
+        step.expectClients.address = swap(step.expectClients.address)
+    return step
 }
 
 function redoSteps(entry) {

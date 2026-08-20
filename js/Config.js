@@ -1,62 +1,58 @@
 .pragma library
 
-var VERSION = 1
+// Host settings adapter. Values come from the inline shell.json entry
+// (injected as `settings` / `setting()`). This module never persists.
 
-var hideChipAtZero = true
-var firstRunShown = false
-var extraExclusions = []
-var revision = 0
-
-function snapshot() {
-    return {
-        version: VERSION,
-        hideChipAtZero: hideChipAtZero,
-        firstRunShown: firstRunShown,
-        extraExclusions: extraExclusions.slice(),
-        revision: revision
-    }
+var DEFAULTS = {
+    hideChipAtZero: true,
+    extraExclusions: ""
 }
 
-function load(raw) {
-    var data = raw
-    if (typeof raw === "string") {
-        try {
-            data = JSON.parse(raw)
-        } catch (e) {
-            return false
+function parseExclusions(value) {
+    var out = []
+    if (value === undefined || value === null || value === "")
+        return out
+    if (typeof value !== "string" && value.length !== undefined) {
+        for (var i = 0; i < value.length; i++) {
+            if (value[i])
+                out.push(String(value[i]))
         }
+        return out
     }
-    if (!data || typeof data !== "object")
+    var parts = String(value).split(",")
+    for (var j = 0; j < parts.length; j++) {
+        var item = parts[j].replace(/^\s+|\s+$/g, "")
+        if (item)
+            out.push(item)
+    }
+    return out
+}
+
+function boolFrom(value, fallback) {
+    if (value === undefined || value === null || value === "")
+        return !!fallback
+    if (value === true || value === false)
+        return value
+    var s = String(value).toLowerCase()
+    if (s === "true" || s === "1" || s === "yes")
+        return true
+    if (s === "false" || s === "0" || s === "no")
         return false
-    if (data.hideChipAtZero !== undefined)
-        hideChipAtZero = !!data.hideChipAtZero
-    if (data.firstRunShown !== undefined)
-        firstRunShown = !!data.firstRunShown
-    extraExclusions = []
-    var list = data.extraExclusions || data.excludeAppIds || []
-    for (var i = 0; i < list.length; i++) {
-        if (list[i])
-            extraExclusions.push(String(list[i]))
-    }
-    revision += 1
-    return true
+    return !!fallback
 }
 
-function serialize() {
-    return JSON.stringify({
-        version: VERSION,
-        hideChipAtZero: hideChipAtZero,
-        firstRunShown: firstRunShown,
-        extraExclusions: extraExclusions
-    }, null, 2)
+function read(settings, key, fallback) {
+    if (settings && settings[key] !== undefined && settings[key] !== null && settings[key] !== "")
+        return settings[key]
+    if (fallback !== undefined)
+        return fallback
+    return DEFAULTS[key]
 }
 
-function markFirstRunShown() {
-    firstRunShown = true
-    revision += 1
+function extraExclusionsFrom(settings) {
+    return parseExclusions(read(settings, "extraExclusions", DEFAULTS.extraExclusions))
 }
 
-function setHideChipAtZero(value) {
-    hideChipAtZero = !!value
-    revision += 1
+function hideChipAtZeroFrom(settings) {
+    return boolFrom(read(settings, "hideChipAtZero", DEFAULTS.hideChipAtZero), DEFAULTS.hideChipAtZero)
 }

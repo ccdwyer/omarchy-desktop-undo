@@ -2,5 +2,14 @@ bin/undo-probe
 src/undo-probe/target/
 .DS_Store
 *.swp
+*.log
 .impl_prompt.md
+.fix_prompt_r1.md
+.review_prompt.md
+.gpt_review_r1.md
+.gpt_review_err.log
 .grok_impl.log
+.grok_fix_r1.log
+.grok_*
+.code-review-graph/
+.serena/

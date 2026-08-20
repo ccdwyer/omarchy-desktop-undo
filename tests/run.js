@@ -53,7 +53,6 @@ let failed = 0
 function test(name, fn) {
   try {
     Journal.reset()
-    Config.load("{\"hideChipAtZero\":true,\"firstRunShown\":false,\"extraExclusions\":[]}")
     fn()
     passed += 1
     process.stdout.write("ok  " + name + "\n")
@@ -228,6 +227,36 @@ test("ops: close of firefox is reopen, no geometry", () => {
   })
   assert.strictEqual(steps.length, 1)
   assert.strictEqual(steps[0].kind, "relaunch")
+  const restore = Ops.closeRestoreSteps({
+    type: "close",
+    address: "0xabc00001",
+    appId: "firefox",
+    multiWindow: true,
+    before: { workspace: 2, x: 1, y: 2, w: 3, h: 4, floating: false }
+  }, "0xdeadbeef")
+  assert.strictEqual(restore.length, 0)
+})
+
+test("ops: close restore waits for live address, never the dead one", () => {
+  const entry = {
+    type: "close",
+    address: "0xold",
+    appId: "kitty",
+    multiWindow: false,
+    before: { workspace: 3, x: 10, y: 20, w: 200, h: 100, floating: true }
+  }
+  const queued = Ops.inverseSteps(entry)
+  assert.strictEqual(queued.length, 1)
+  assert.strictEqual(queued[0].kind, "relaunch")
+  queued.forEach((s) => {
+    assert.ok(!s.arg || String(s.arg).indexOf("0xold") < 0)
+  })
+  const restore = Ops.closeRestoreSteps(entry, "0xnew")
+  assert.ok(restore.length >= 1)
+  restore.forEach((s) => {
+    assert.ok(String(s.arg).indexOf("0xnew") >= 0, s.arg)
+    assert.ok(String(s.arg).indexOf("0xold") < 0, s.arg)
+  })
 })
 
 test("ops: workspace inverse is movetoworkspacesilent", () => {
@@ -371,12 +400,49 @@ test("ops table 100% type coverage for dispatch strings", () => {
   })
 })
 
-test("config: extra exclusions round-trip", () => {
-  assert.ok(Config.load("{\"extraExclusions\":[\"secret-app\"],\"hideChipAtZero\":false}"))
-  var cfg = Config.snapshot()
-  assert.strictEqual(cfg.hideChipAtZero, false)
-  assert.ok(cfg.extraExclusions.indexOf("secret-app") >= 0)
-  assert.ok(Apps.isExcluded("secret-app", cfg.extraExclusions))
+test("settings: extra exclusions come from host inline settings", () => {
+  var excl = Config.extraExclusionsFrom({ extraExclusions: "secret-app, other" })
+  assert.ok(excl.indexOf("secret-app") >= 0)
+  assert.ok(excl.indexOf("other") >= 0)
+  assert.strictEqual(Config.hideChipAtZeroFrom({ hideChipAtZero: false }), false)
+  assert.strictEqual(Config.hideChipAtZeroFrom({}), true)
+  assert.ok(Apps.isExcluded("secret-app", excl))
+})
+
+test("diff: drag coalesce keeps the first before", () => {
+  const start = jsonFix("clients-floating.json")
+  const mid = JSON.parse(JSON.stringify(start))
+  mid[0].at = [200, 90]
+  const end = jsonFix("clients-floating-moved.json")
+  const first = Diff.diff(start, mid, { name: "geometry" }).filter((a) => a.type === "move")[0]
+  const second = Diff.diff(mid, end, { name: "geometry" }).filter((a) => a.type === "move")[0]
+  const coalesced = Diff.coalesceDrag(Diff.coalesceDrag(null, first), second)
+  assert.strictEqual(coalesced.before.x, 80)
+  assert.strictEqual(coalesced.before.y, 80)
+  assert.strictEqual(coalesced.after.x, 400)
+  assert.strictEqual(coalesced.after.y, 120)
+})
+
+test("executor: retarget rewrites queued restoration addresses", () => {
+  const st = Executor.create()
+  Executor.enqueue(st, [{
+    dispatcher: "movewindowpixel",
+    arg: "exact 10 20,address:0xold",
+    expectClients: { address: "0xold", x: 10, y: 20 }
+  }], {})
+  Executor.retarget(st, "0xold", "0xnew", Ops.rewriteAddress)
+  assert.strictEqual(st.queue[0].step.arg, "exact 10 20,address:0xnew")
+  assert.strictEqual(st.queue[0].step.expectClients.address, "0xnew")
+})
+
+test("journal: firstRunShown persists in journal state, not a config file", () => {
+  assert.strictEqual(Journal.snapshot().firstRunShown, false)
+  Journal.markFirstRunShown()
+  const dumped = Journal.serialize()
+  assert.ok(dumped.indexOf("firstRunShown") >= 0)
+  Journal.reset()
+  assert.ok(Journal.load(dumped))
+  assert.strictEqual(Journal.snapshot().firstRunShown, true)
 })
 
 const summary = passed + " passed, " + failed + " failed"

@@ -7,7 +7,6 @@ import qs.Commons
 import qs.Ui
 import "js/Journal.js" as Journal
 import "js/Apps.js" as Apps
-import "js/Config.js" as Config
 
 Item {
   id: root
@@ -54,7 +53,7 @@ Item {
   function open(payloadJson) {
     root.opened = true
     root.refresh()
-    root.firstRun = !Config.firstRunShown
+    root.firstRun = !Journal.snapshot().firstRunShown
     try {
       var payload = payloadJson && String(payloadJson).length ? JSON.parse(payloadJson) : {}
       if (payload && payload.firstRun)
@@ -96,28 +95,23 @@ Item {
   }
 
   function callService(method, arg) {
+    var payload = arg === undefined || arg === null ? "" : String(arg)
     var svc = root.serviceRef()
     if (svc) {
       if (method === "undo" && typeof svc.undo === "function")
-        return svc.undo()
+        return svc.undo(payload)
       if (method === "redo" && typeof svc.redo === "function")
-        return svc.redo()
+        return svc.redo(payload)
       if (method === "scrubTo" && typeof svc.scrubTo === "function")
-        return svc.scrubTo(Number(arg))
+        return svc.scrubTo(payload)
       if (method === "commit" && typeof svc.commit === "function")
-        return svc.commit()
+        return svc.commit(payload)
       if (method === "cancel" && typeof svc.cancel === "function")
-        return svc.cancel()
+        return svc.cancel(payload)
       if (method === "markFirstRun" && typeof svc.markFirstRun === "function")
-        return svc.markFirstRun()
+        return svc.markFirstRun(payload)
     }
-    if (shell && typeof shell.call === "function") {
-      shell.call(root.pluginId, method, arg === undefined || arg === null ? "" : String(arg))
-      return "ok"
-    }
-    var cmd = ["omarchy-shell", "shell", "call", root.pluginId, method]
-    if (arg !== undefined && arg !== null && String(arg).length)
-      cmd.push(String(arg))
+    var cmd = ["omarchy-shell", "shell", "call", root.pluginId, method, payload]
     ipcProc.command = cmd
     ipcProc.running = true
     return "queued"
@@ -149,7 +143,7 @@ Item {
   }
 
   function dismissFirstRun() {
-    Config.markFirstRunShown()
+    Journal.markFirstRunShown()
     root.firstRun = false
     root.callService("markFirstRun", "")
   }

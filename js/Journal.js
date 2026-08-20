@@ -12,6 +12,7 @@ var entries = []
 var cursor = 0
 var revision = 0
 var persistDirty = false
+var firstRunShown = false
 
 function _id() {
     var t = Date.now().toString(16)
@@ -58,7 +59,8 @@ function snapshot() {
         entries: copy,
         revision: revision,
         depth: depth(),
-        redoDepth: redoDepth()
+        redoDepth: redoDepth(),
+        firstRunShown: firstRunShown
     }
 }
 
@@ -187,6 +189,8 @@ function load(obj) {
         cursor = entries.length
     if (cursor > entries.length)
         cursor = entries.length
+    if (data.firstRunShown !== undefined)
+        firstRunShown = !!data.firstRunShown
     bump()
     persistDirty = false
     return true
@@ -204,13 +208,23 @@ function serialize() {
         version: VERSION,
         cursor: cursor,
         entries: clean,
+        firstRunShown: firstRunShown,
         savedAt: Date.now()
     })
+}
+
+function markFirstRunShown() {
+    if (firstRunShown)
+        return false
+    firstRunShown = true
+    bump()
+    return true
 }
 
 function reset() {
     entries = []
     cursor = 0
+    firstRunShown = false
     bump()
 }
 

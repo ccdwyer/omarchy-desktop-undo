@@ -13,10 +13,42 @@
     "overlay": "Overlay.qml",
     "barWidget": "BarWidget.qml"
   },
+  "defaults": {
+    "hideChipAtZero": true,
+    "extraExclusions": ""
+  },
+  "schema": [
+    {
+      "key": "hideChipAtZero",
+      "type": "boolean",
+      "label": "Hide bar chip when the journal is empty"
+    },
+    {
+      "key": "extraExclusions",
+      "type": "string",
+      "label": "Extra excluded app classes (comma-separated)"
+    }
+  ],
   "barWidget": {
     "displayName": "Desktop Undo",
     "category": "Desktop",
     "allowMultiple": false,
-    "defaultSection": "right"
+    "defaultSection": "right",
+    "defaults": {
+      "hideChipAtZero": true,
+      "extraExclusions": ""
+    },
+    "schema": [
+      {
+        "key": "hideChipAtZero",
+        "type": "boolean",
+        "label": "Hide bar chip when the journal is empty"
+      },
+      {
+        "key": "extraExclusions",
+        "type": "string",
+        "label": "Extra excluded app classes (comma-separated)"
+      }
+    ]
   }
 }
