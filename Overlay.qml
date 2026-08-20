@@ -24,6 +24,10 @@ Item {
   property bool firstRun: false
   property bool previewHint: false
   property bool pendingDismiss: false
+  property bool bindInstalled: false
+  property bool bindCanSet: false
+  property string bindStatusText: ""
+  property string bindOfferNote: ""
   property string pluginId: "io.github.chris.desktop-undo"
 
   property color background: Color.menu.background
@@ -61,6 +65,8 @@ Item {
       if (payload && payload.firstRun)
         root.firstRun = true
     } catch (e) {}
+    root.callService("scanBinds", "")
+    root.refreshBinds()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -122,6 +128,8 @@ Item {
       else if (method === "journal") fn = svc.journal
       else if (method === "ping") fn = svc.ping
       else if (method === "installBinds") fn = svc.installBinds
+      else if (method === "removeBinds") fn = svc.removeBinds
+      else if (method === "scanBinds") fn = svc.scanBinds
     }
     if (typeof fn === "function") {
       try {
@@ -145,6 +153,30 @@ Item {
   function status(arg) { return root.callService("status", arg) }
   function journal(arg) { return root.callService("journal", arg) }
   function installBinds(arg) { return root.callService("installBinds", arg) }
+  function removeBinds(arg) { return root.callService("removeBinds", arg) }
+  function scanBinds(arg) { return root.callService("scanBinds", arg) }
+
+  function refreshBinds() {
+    var p = Binds.offer || {}
+    root.bindInstalled = !p.needed
+    root.bindCanSet = !!(p.toAdd && p.toAdd.length)
+    root.bindOfferNote = String(p.note || "")
+    root.bindStatusText = Binds.statusLine(p)
+  }
+
+  function setHotkey() {
+    root.callService("installBinds", "set")
+    if (root.firstRun)
+      root.dismissFirstRun()
+  }
+
+  function changeHotkey() {
+    root.callService("installBinds", "set")
+  }
+
+  function clearHotkey() {
+    root.callService("removeBinds", "")
+  }
 
   function refresh() {
     var snap = Journal.snapshot()
@@ -174,6 +206,7 @@ Item {
     root.selectedIndex = Math.max(0, root.liveCursor - 1)
     if (list.length === 0)
       root.selectedIndex = 0
+    root.refreshBinds()
   }
 
   function dismissFirstRun() {
@@ -242,7 +275,7 @@ Item {
     BorderSurface {
       id: film
       width: Math.min(Style.space(980), panel.width - Style.gapsOut * 2)
-      height: Math.min(Style.space(280), panel.height - Style.gapsOut * 2)
+      height: Math.min(Style.space(320), panel.height - Style.gapsOut * 2)
       radius: root.cornerRadius
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: parent.bottom
@@ -295,34 +328,103 @@ Item {
         anchors.margins: Style.spacing.panelPadding
         spacing: Style.spacing.md
 
-        Row {
+        Column {
+          id: headerCol
           width: parent.width
-          spacing: Style.space(12)
+          spacing: Style.space(8)
 
-          Text {
-            text: "Desktop Undo"
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.heading
-            font.bold: true
-            anchors.verticalCenter: parent.verticalCenter
+          Row {
+            width: parent.width
+            spacing: Style.space(12)
+
+            Text {
+              text: "Desktop Undo"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.heading
+              font.bold: true
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+              text: root.cards.length === 0
+                    ? "empty"
+                    : (root.liveCursor + " / " + root.liveCount + "  ·  Enter commits  ·  Esc restores")
+              color: root.foreground
+              opacity: 0.62
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              anchors.verticalCenter: parent.verticalCenter
+            }
           }
 
-          Text {
-            text: root.cards.length === 0
-                  ? "empty"
-                  : (root.liveCursor + " / " + root.liveCount + "  ·  Enter commits  ·  Esc restores")
-            color: root.foreground
-            opacity: 0.62
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            anchors.verticalCenter: parent.verticalCenter
+          Row {
+            width: parent.width
+            spacing: Style.space(10)
+            visible: root.bindInstalled
+
+            Text {
+              text: root.bindStatusText
+              color: root.foreground
+              opacity: 0.78
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              elide: Text.ElideRight
+              width: Math.max(0, parent.width - Style.space(220))
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Rectangle {
+              width: changeLab.implicitWidth + Style.space(16)
+              height: changeLab.implicitHeight + Style.space(8)
+              radius: Math.max(4, root.cornerRadius / 2)
+              color: "transparent"
+              border.width: 1
+              border.color: root.accent
+              anchors.verticalCenter: parent.verticalCenter
+              Text {
+                id: changeLab
+                anchors.centerIn: parent
+                text: "Change hotkey"
+                color: root.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.changeHotkey()
+              }
+            }
+
+            Rectangle {
+              width: removeLab.implicitWidth + Style.space(16)
+              height: removeLab.implicitHeight + Style.space(8)
+              radius: Math.max(4, root.cornerRadius / 2)
+              color: "transparent"
+              border.width: 1
+              border.color: root.accent
+              anchors.verticalCenter: parent.verticalCenter
+              Text {
+                id: removeLab
+                anchors.centerIn: parent
+                text: "Remove hotkey"
+                color: root.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.clearHotkey()
+              }
+            }
           }
         }
 
         Item {
           width: parent.width
-          height: parent.height - Style.space(48)
+          height: parent.height - headerCol.implicitHeight - parent.spacing
 
           ListView {
             id: strip
@@ -454,11 +556,14 @@ Item {
             Text {
               width: film.width - Style.space(40)
               horizontalAlignment: Text.AlignHCenter
-              text: "Super+Z undo · Super+Y redo · Super+Shift+Z timeline"
+              text: root.bindInstalled
+                    ? root.bindStatusText
+                    : "Set a hotkey from this overlay. The bar chip still opens it."
               color: root.foreground
               opacity: 0.6
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
+              wrapMode: Text.WordWrap
             }
           }
         }
@@ -466,7 +571,7 @@ Item {
     }
 
     BorderSurface {
-      visible: root.firstRun && root.opened
+      visible: root.opened && (!root.bindInstalled || root.firstRun)
       width: Math.min(Style.space(520), panel.width - Style.gapsOut * 2)
       height: firstRunCol.implicitHeight + Style.spacing.panelPadding * 2
       radius: root.cornerRadius
@@ -480,7 +585,10 @@ Item {
       MouseArea {
         anchors.fill: parent
         z: 0
-        onClicked: root.dismissFirstRun()
+        onClicked: {
+          if (root.bindInstalled)
+            root.dismissFirstRun()
+        }
       }
 
       Column {
@@ -493,7 +601,7 @@ Item {
         spacing: Style.space(10)
 
         Text {
-          text: "Keybinds"
+          text: root.bindInstalled ? "Keybinds" : "Set hotkey"
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.heading
@@ -502,14 +610,88 @@ Item {
 
         Text {
           width: parent.width
-          text: "Super+Z undo · Super+Y redo · Super+Shift+Z timeline.\nThe plugin assigns a free combo on first load and notifies you. Occupied Omarchy hotkeys are skipped.\nThe bar chip still opens this overlay."
+          text: root.bindInstalled
+                ? ("Hotkeys: " + root.bindStatusText + "\nThe bar chip still opens this overlay.")
+                : (root.bindStatusText + "\nClick Set hotkey to write a marked o.bind block in ~/.config/hypr/bindings.lua.\nOccupied combos (including stock Omarchy hotkeys) are skipped. This plugin never unbinds someone else's key.")
           color: root.foreground
           wrapMode: Text.WordWrap
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
         }
 
+        Rectangle {
+          visible: !root.bindInstalled
+          width: setLab.implicitWidth + Style.space(20)
+          height: setLab.implicitHeight + Style.space(12)
+          radius: Math.max(4, root.cornerRadius / 2)
+          color: root.accent
+          Text {
+            id: setLab
+            anchors.centerIn: parent
+            text: "Set hotkey"
+            color: root.background
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            font.bold: true
+          }
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.setHotkey()
+          }
+        }
+
+        Row {
+          visible: root.bindInstalled
+          spacing: Style.space(8)
+
+          Rectangle {
+            width: changeCardLab.implicitWidth + Style.space(16)
+            height: changeCardLab.implicitHeight + Style.space(10)
+            radius: Math.max(4, root.cornerRadius / 2)
+            color: "transparent"
+            border.width: 1
+            border.color: root.accent
+            Text {
+              id: changeCardLab
+              anchors.centerIn: parent
+              text: "Change hotkey"
+              color: root.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.changeHotkey()
+            }
+          }
+
+          Rectangle {
+            width: removeCardLab.implicitWidth + Style.space(16)
+            height: removeCardLab.implicitHeight + Style.space(10)
+            radius: Math.max(4, root.cornerRadius / 2)
+            color: "transparent"
+            border.width: 1
+            border.color: root.accent
+            Text {
+              id: removeCardLab
+              anchors.centerIn: parent
+              text: "Remove hotkey"
+              color: root.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.clearHotkey()
+            }
+          }
+        }
+
         Text {
+          visible: root.firstRun && root.bindInstalled
           text: "Enter / click anywhere on this card to dismiss"
           color: root.accent
           font.family: root.fontFamily

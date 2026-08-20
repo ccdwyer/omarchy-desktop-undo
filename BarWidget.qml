@@ -4,6 +4,7 @@ import qs.Commons
 import qs.Ui
 import "js/Journal.js" as Journal
 import "js/Config.js" as Config
+import "js/Binds.js" as Binds
 
 BarWidget {
   id: root
@@ -11,6 +12,7 @@ BarWidget {
 
   property int depth: 0
   property int redoDepth: 0
+  property bool bindInstalled: false
 
   readonly property bool hideAtZero: {
     if (typeof setting === "function")
@@ -36,9 +38,11 @@ BarWidget {
     var snap = Journal.snapshot()
     root.depth = snap.depth
     root.redoDepth = snap.redoDepth
+    var offer = Binds.offer || {}
+    root.bindInstalled = !offer.needed
   }
 
-  visible: root.depth > 0 || !root.hideAtZero
+  visible: root.depth > 0 || !root.hideAtZero || !root.bindInstalled
   implicitWidth: visible ? button.implicitWidth : 0
   implicitHeight: button.implicitHeight
 
@@ -54,9 +58,11 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: root.depth > 0 ? ("↩ " + root.depth) : "↩"
-    tooltipText: root.depth > 0
-                 ? (root.depth + " action" + (root.depth === 1 ? "" : "s") + " to undo")
-                 : "Desktop Undo — nothing yet"
+    tooltipText: !root.bindInstalled
+                 ? "Desktop Undo — click to set a hotkey"
+                 : (root.depth > 0
+                    ? (root.depth + " action" + (root.depth === 1 ? "" : "s") + " to undo")
+                    : "Desktop Undo — nothing yet")
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton)
         root.summonOverlay()

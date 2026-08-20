@@ -2,9 +2,11 @@
 "use strict"
 
 const fs = require("fs")
+const os = require("os")
 const path = require("path")
 const vm = require("vm")
 const assert = require("assert")
+const { execFileSync } = require("child_process")
 
 const ROOT = path.resolve(__dirname, "..")
 const JS = path.join(ROOT, "js")
@@ -451,6 +453,8 @@ test("binds: empty live list offers preferred combos", () => {
   assert.strictEqual(p.toAdd.length, 3)
   assert.strictEqual(p.toAdd[0].keys, "SUPER + Z")
   assert.ok(Binds.luaBlock(p.toAdd).indexOf("o.bind(\"SUPER + Z\"") === 0)
+  assert.ok(Binds.statusLine(p).indexOf("No hotkey set") === 0)
+  assert.ok(Binds.statusLine(p).indexOf("Super+Z") >= 0)
 })
 
 test("binds: skips occupied combos and uses an alternate", () => {
@@ -462,7 +466,7 @@ test("binds: skips occupied combos and uses an alternate", () => {
   const undo = p.toAdd.filter((x) => x.desc === "Desktop undo")[0]
   assert.ok(undo)
   assert.strictEqual(undo.chosen, "SUPER + ALT + Z")
-  assert.ok(p.note.indexOf("SUPER + ALT + Z") >= 0)
+  assert.ok(p.note.indexOf("Super+Alt+Z") >= 0)
 })
 
 test("binds: already-ours hides the offer", () => {
@@ -472,6 +476,20 @@ test("binds: already-ours hides the offer", () => {
   const p = Binds.plan(live)
   assert.strictEqual(p.needed, false)
   assert.strictEqual(p.already, 1)
+  assert.strictEqual(p.installed.length, 1)
+  assert.ok(Binds.statusLine(p).indexOf("Super+Z") >= 0)
+})
+
+test("binds: ours on an alternate still counts as installed", () => {
+  const live = [
+    { modmask: 64, key: "Z", dispatcher: "exec", arg: "other", description: "Full screen" },
+    { modmask: 72, key: "Z", dispatcher: "__lua", arg: "15", description: "Desktop undo" }
+  ]
+  const p = Binds.plan(live)
+  assert.strictEqual(p.needed, false)
+  assert.ok(p.installed.some((it) => it.keys === "SUPER + ALT + Z"))
+  const items = Binds.writeItems(p)
+  assert.ok(items.some((it) => (it.chosen || it.keys) === "SUPER + ALT + Z"))
 })
 
 test("binds: notify body lists assigned keys", () => {
@@ -481,6 +499,46 @@ test("binds: notify body lists assigned keys", () => {
   assert.strictEqual(argv[0], "omarchy")
   assert.strictEqual(argv[1], "notification")
   assert.strictEqual(argv[2], "send")
+})
+
+test("qml: no first-load auto-install; overlay offers Set/Remove hotkey", () => {
+  const svc = fs.readFileSync(path.join(ROOT, "Service.qml"), "utf8")
+  const ov = fs.readFileSync(path.join(ROOT, "Overlay.qml"), "utf8")
+  const bar = fs.readFileSync(path.join(ROOT, "BarWidget.qml"), "utf8")
+  const binds = fs.readFileSync(path.join(ROOT, "js/Binds.js"), "utf8")
+  assert.ok(svc.indexOf("claimAuto") < 0)
+  assert.ok(ov.indexOf("claimAuto") < 0)
+  assert.ok(bar.indexOf("claimAuto") < 0)
+  assert.ok(binds.indexOf("claimAuto") < 0)
+  assert.ok(svc.indexOf('installBinds("auto")') < 0)
+  assert.ok(ov.indexOf('installBinds("auto")') < 0)
+  assert.ok(bar.indexOf("install-binds.py") < 0)
+  assert.ok(bar.indexOf("summonOverlay") >= 0)
+  assert.ok(svc.indexOf("uninstall-binds.py") >= 0)
+  assert.ok(ov.indexOf("Set hotkey") >= 0)
+  assert.ok(ov.indexOf("Remove hotkey") >= 0)
+  assert.ok(svc.indexOf('if (mode === "auto")') >= 0)
+})
+
+test("compat: install-binds writes and uninstall-binds removes the marked block", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-undo-binds-"))
+  const cfg = path.join(tmp, "hypr")
+  fs.mkdirSync(cfg, { recursive: true })
+  const bindings = path.join(cfg, "bindings.lua")
+  fs.writeFileSync(bindings, 'o.bind("SUPER + Q", "Quit", "hyprctl dispatch exit")\n')
+  const env = Object.assign({}, process.env, { XDG_CONFIG_HOME: tmp })
+  const lua = 'o.bind("SUPER + Z", "Desktop undo", "omarchy-shell io.github.chris.desktop-undo undo \'\'")'
+  execFileSync("python3", [path.join(ROOT, "compat/install-binds.py"), "io.github.chris.desktop-undo", lua], { env })
+  let text = fs.readFileSync(bindings, "utf8")
+  assert.ok(text.indexOf("-- BEGIN io.github.chris.desktop-undo") >= 0)
+  assert.ok(text.indexOf("o.bind(\"SUPER + Z\"") >= 0)
+  assert.ok(text.indexOf("SUPER + Q") >= 0)
+  execFileSync("python3", [path.join(ROOT, "compat/uninstall-binds.py"), "io.github.chris.desktop-undo"], { env })
+  text = fs.readFileSync(bindings, "utf8")
+  assert.ok(text.indexOf("-- BEGIN io.github.chris.desktop-undo") < 0)
+  assert.ok(text.indexOf("Desktop undo") < 0)
+  assert.ok(text.indexOf("SUPER + Q") >= 0)
+  execFileSync("python3", [path.join(ROOT, "compat/uninstall-binds.py"), "io.github.chris.desktop-undo"], { env })
 })
 
 test("settings: extra exclusions come from host inline settings", () => {

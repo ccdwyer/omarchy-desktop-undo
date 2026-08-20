@@ -70,7 +70,9 @@ Item {
   property var overlayEntries: []
   property bool scrubbing: false
   property bool bindOfferNeeded: true
+  property bool bindInstalled: false
   property string bindOfferNote: ""
+  property string bindStatusLine: ""
 
   readonly property int debounceMs: 400
   readonly property int pollMs: 250
@@ -788,14 +790,18 @@ Item {
       socket: eventSock.connected || root.hyprlandEventsLive,
       status: root.lastStatus,
       bindOfferNeeded: root.bindOfferNeeded,
-      bindOfferNote: root.bindOfferNote
+      bindInstalled: root.bindInstalled,
+      bindOfferNote: root.bindOfferNote,
+      bindStatusLine: root.bindStatusLine
     })
   }
 
   function applyBindPlan(plan) {
     var p = plan || Binds.offer
     root.bindOfferNeeded = !!p.needed
+    root.bindInstalled = !p.needed
     root.bindOfferNote = String(p.note || "")
+    root.bindStatusLine = Binds.statusLine(p)
     Binds.setOffer(p)
     root.publish()
   }
@@ -804,11 +810,9 @@ Item {
     enqueueWork(["hyprctl", "-j", "binds"], function(text, code) {
       if (Number(code) !== 0)
         return
-      var plan = Binds.applyScan(text)
-      root.applyBindPlan(plan)
-      if (plan.needed && plan.toAdd && plan.toAdd.length && Binds.claimAuto())
-        root.installBinds("auto")
+      root.applyBindPlan(Binds.applyScan(text))
     })
+    return "ok"
   }
 
   function notifyNewBinds(plan) {
@@ -819,6 +823,9 @@ Item {
   }
 
   function installBinds(arg) {
+    var mode = String(arg === undefined || arg === null ? "" : arg).trim()
+    if (mode === "auto")
+      return "refused"
     enqueueWork(["hyprctl", "-j", "binds"], function(text, code) {
       if (Number(code) !== 0) {
         root.bindOfferNote = "could not read keybinds"
@@ -826,20 +833,34 @@ Item {
         return
       }
       var plan = Binds.applyScan(text)
-      if (!plan.toAdd || !plan.toAdd.length) {
+      var items = Binds.writeItems(plan)
+      if (!items.length) {
         root.applyBindPlan(plan)
         return
       }
-      var lua = Binds.luaBlock(plan.toAdd)
+      var lua = Binds.luaBlock(items)
       enqueueWork(["python3", root.pluginDir + "/compat/install-binds.py", root.pluginId, lua], function(out, instCode) {
         if (Number(instCode) !== 0) {
           root.bindOfferNote = "could not write ~/.config/hypr/bindings.lua"
           root.publish()
           return
         }
-        root.notifyNewBinds(plan)
+        if (plan.toAdd && plan.toAdd.length)
+          root.notifyNewBinds(plan)
         Qt.callLater(root.scanBinds)
       })
+    })
+    return "ok"
+  }
+
+  function removeBinds(arg) {
+    enqueueWork(["python3", root.pluginDir + "/compat/uninstall-binds.py", root.pluginId], function(out, remCode) {
+      if (Number(remCode) !== 0) {
+        root.bindOfferNote = "could not remove ~/.config/hypr/bindings.lua block"
+        root.publish()
+        return
+      }
+      Qt.callLater(root.scanBinds)
     })
     return "ok"
   }
@@ -1140,7 +1161,9 @@ Item {
     function status(arg: string): string { return root.statusJson() }
     function journal(arg: string): string { return Journal.serialize() }
     function markFirstRun(arg: string): string { return root.markFirstRun(arg) }
+    function scanBinds(arg: string): string { return root.scanBinds() }
     function installBinds(arg: string): string { return root.installBinds(arg) }
+    function removeBinds(arg: string): string { return root.removeBinds(arg) }
   }
 
   Component.onCompleted: {

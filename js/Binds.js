@@ -4,6 +4,7 @@
 // Lua binds show up as dispatcher "__lua" with a description, not the
 // omarchy-shell command in `arg`, so "ours" is plugin-id in arg OR our
 // descriptions.
+// Writing bindings.lua is opt-in from the overlay. Never auto-assign.
 
 var PLUGIN_ID = "io.github.chris.desktop-undo"
 var SUPER = 64
@@ -47,18 +48,10 @@ var CANDIDATES = [
 var offer = {
     needed: true,
     note: "",
-    installed: 0,
+    already: 0,
+    installed: [],
     toAdd: [],
     skipped: []
-}
-
-var autoClaimed = false
-
-function claimAuto() {
-    if (autoClaimed)
-        return false
-    autoClaimed = true
-    return true
 }
 
 function setOffer(next) {
@@ -107,6 +100,62 @@ function oursCount(binds) {
     return n
 }
 
+function keysFromModmask(modmask, key) {
+    var parts = []
+    var m = Number(modmask) || 0
+    if (m & SUPER)
+        parts.push("SUPER")
+    if (m & CTRL)
+        parts.push("CTRL")
+    if (m & ALT)
+        parts.push("ALT")
+    if (m & SHIFT)
+        parts.push("SHIFT")
+    var k = String(key || "").toUpperCase()
+    if (k)
+        parts.push(k)
+    return parts.join(" + ")
+}
+
+function prettyKeys(keys) {
+    return String(keys || "")
+        .replace(/SUPER/g, "Super")
+        .replace(/SHIFT/g, "Shift")
+        .replace(/CTRL/g, "Ctrl")
+        .replace(/ALT/g, "Alt")
+        .replace(/ \+ /g, "+")
+}
+
+function cmdForDesc(desc) {
+    var want = String(desc || "")
+    for (var i = 0; i < CANDIDATES.length; i++) {
+        if (CANDIDATES[i].desc === want)
+            return CANDIDATES[i].cmd
+    }
+    return ""
+}
+
+function oursLive(binds) {
+    var out = []
+    var list = binds || []
+    for (var i = 0; i < list.length; i++) {
+        var b = list[i]
+        if (!isOurs(b))
+            continue
+        var desc = String(b.description || "")
+        var keys = keysFromModmask(b.modmask, keyOf(b))
+        out.push({
+            keys: keys,
+            chosen: keys,
+            desc: desc,
+            cmd: cmdForDesc(desc),
+            modmask: Number(b.modmask),
+            key: keyOf(b)
+        })
+    }
+    return out
+}
+
 function comboOwner(binds, modmask, key) {
     var want = String(key || "").toUpperCase()
     var list = binds || []
@@ -128,11 +177,12 @@ function pickCombo(binds, candidate) {
     if (!owner)
         return { keys: candidate.keys, modmask: candidate.modmask, key: candidate.key, desc: candidate.desc, cmd: candidate.cmd, chosen: candidate.keys }
     if (owner.ours)
-        return { already: true, keys: candidate.keys, desc: candidate.desc }
+        return { already: true, keys: candidate.keys, desc: candidate.desc, cmd: candidate.cmd, chosen: candidate.keys }
     var alts = candidate.alternates || []
     for (var i = 0; i < alts.length; i++) {
         var a = alts[i]
-        if (!comboOwner(binds, a.modmask, a.key))
+        var altOwner = comboOwner(binds, a.modmask, a.key)
+        if (!altOwner)
             return {
                 keys: a.keys,
                 modmask: a.modmask,
@@ -143,14 +193,21 @@ function pickCombo(binds, candidate) {
                 preferred: candidate.keys,
                 conflict: owner.desc
             }
+        if (altOwner.ours)
+            return { already: true, keys: a.keys, desc: candidate.desc, cmd: candidate.cmd, chosen: a.keys }
     }
     return { skipped: true, keys: candidate.keys, desc: candidate.desc, conflict: owner.desc }
+}
+
+function suggestedKeys() {
+    return CANDIDATES.map(function(c) { return c.keys }).join(", ")
 }
 
 function plan(binds) {
     var toAdd = []
     var skipped = []
     var already = 0
+    var installed = oursLive(binds)
     for (var i = 0; i < CANDIDATES.length; i++) {
         var pick = pickCombo(binds, CANDIDATES[i])
         if (pick.already)
@@ -160,19 +217,20 @@ function plan(binds) {
         else
             toAdd.push(pick)
     }
-    var needed = already === 0
+    var needed = installed.length === 0
     var note = ""
     if (!needed)
-        note = ""
+        note = installed.map(function(it) { return prettyKeys(it.keys) + " " + String(it.desc || "").replace(/^Desktop /i, "") }).join(" · ")
     else if (!toAdd.length && skipped.length)
-        note = skipped.map(function(s) { return s.keys + " is " + (s.conflict || "taken") }).join("; ")
+        note = skipped.map(function(s) { return prettyKeys(s.keys) + " is " + (s.conflict || "taken") }).join("; ")
     else if (toAdd.length) {
-        var bits = toAdd.map(function(p) { return p.chosen || p.keys })
-        note = "Add " + bits.join(", ")
+        var bits = toAdd.map(function(p) { return prettyKeys(p.chosen || p.keys) })
+        note = "Suggested: " + bits.join(", ")
         for (var s = 0; s < skipped.length; s++)
-            note += " — skipped " + skipped[s].keys + " (" + skipped[s].conflict + ")"
-    }
-    return { needed: needed, already: already, toAdd: toAdd, skipped: skipped, note: note }
+            note += " — skipped " + prettyKeys(skipped[s].keys) + " (" + skipped[s].conflict + ")"
+    } else
+        note = "Suggested: " + CANDIDATES.map(function(c) { return prettyKeys(c.keys) }).join(", ")
+    return { needed: needed, already: already, installed: installed, toAdd: toAdd, skipped: skipped, note: note }
 }
 
 function luaLine(item) {
@@ -188,6 +246,43 @@ function luaBlock(items) {
     for (var i = 0; i < list.length; i++)
         lines.push(luaLine(list[i]))
     return lines.join("\n")
+}
+
+function writeItems(plan) {
+    var items = []
+    var seen = {}
+    function add(it) {
+        if (!it)
+            return
+        var d = String(it.desc || "")
+        if (!d || seen[d])
+            return
+        if (!(it.chosen || it.keys) || !it.cmd)
+            return
+        seen[d] = true
+        items.push(it)
+    }
+    var p = plan || offer
+    var addl = p.toAdd || []
+    for (var j = 0; j < addl.length; j++)
+        add(addl[j])
+    var inst = p.installed || []
+    for (var i = 0; i < inst.length; i++)
+        add(inst[i])
+    return items
+}
+
+function statusLine(plan) {
+    var p = plan || offer
+    var inst = p.installed || []
+    if (inst.length)
+        return inst.map(function(it) { return prettyKeys(it.keys) + " " + String(it.desc || "").replace(/^Desktop /i, "") }).join(" · ")
+    var bits = (p.toAdd || []).map(function(it) { return prettyKeys(it.chosen || it.keys) })
+    if (bits.length)
+        return "No hotkey set. Suggested: " + bits.join(", ")
+    if (p.skipped && p.skipped.length)
+        return "No hotkey set. " + (p.note || "preferred combos are taken")
+    return "No hotkey set. Suggested: " + CANDIDATES.map(function(c) { return prettyKeys(c.keys) }).join(", ")
 }
 
 function applyScan(raw) {
