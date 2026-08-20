@@ -7,6 +7,7 @@ import qs.Ui
 import "js/Journal.js" as Journal
 import "js/Apps.js" as Apps
 import "js/Scrub.js" as Scrub
+import "js/Binds.js" as Binds
 
 Item {
   id: root
@@ -120,6 +121,7 @@ Item {
       else if (method === "status") fn = svc.status
       else if (method === "journal") fn = svc.journal
       else if (method === "ping") fn = svc.ping
+      else if (method === "installBinds") fn = svc.installBinds
     }
     if (typeof fn === "function") {
       try {
@@ -142,6 +144,7 @@ Item {
   function ping(arg) { return "ok" }
   function status(arg) { return root.callService("status", arg) }
   function journal(arg) { return root.callService("journal", arg) }
+  function installBinds(arg) { return root.callService("installBinds", arg) }
 
   function refresh() {
     var snap = Journal.snapshot()
@@ -474,8 +477,15 @@ Item {
       borderSpec: root.borderSpec
       z: 20
 
+      MouseArea {
+        anchors.fill: parent
+        z: 0
+        onClicked: root.dismissFirstRun()
+      }
+
       Column {
         id: firstRunCol
+        z: 1
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
@@ -492,11 +502,34 @@ Item {
 
         Text {
           width: parent.width
-          text: "Desktop Undo does not write Hyprland config. Bind these yourself (snippet in the README):\n\nSuper+Z   undo\nSuper+Y   redo\nSuper+Shift+Z   timeline\n\nThe bar chip always opens this overlay if a bind collides."
+          text: Binds.offer && Binds.offer.needed
+                ? ("No Desktop Undo keys yet.\n\nPreferred: Super+Z undo · Super+Y redo · Super+Shift+Z timeline.\nCombos you already use are skipped.\n\n" + String((Binds.offer && Binds.offer.note) || ""))
+                : "Super+Z undo · Super+Y redo · Super+Shift+Z timeline.\nThe bar chip still opens this overlay."
           color: root.foreground
           wrapMode: Text.WordWrap
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
+        }
+
+        Rectangle {
+          visible: !!(Binds.offer && Binds.offer.needed)
+          width: bindLabel.implicitWidth + Style.space(16)
+          height: bindLabel.implicitHeight + Style.space(10)
+          radius: Math.max(4, root.cornerRadius / 2)
+          color: root.accent
+          Text {
+            id: bindLabel
+            anchors.centerIn: parent
+            text: "Add keybindings"
+            color: root.background
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.callService("installBinds", "")
+          }
         }
 
         Text {
@@ -505,11 +538,6 @@ Item {
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
         }
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        onClicked: root.dismissFirstRun()
       }
     }
   }

@@ -34,7 +34,7 @@ omarchy-shell shell rescanPlugins
 | Super+Y | Redo |
 | Super+Shift+Z | Open timeline overlay |
 
-The plugin does **not** write these into `hyprland.conf`. Bind them yourself.
+If none of those keys are bound yet, the overlay first-run card and a **keys** chip on the bar offer **Add keybindings**. That writes `o.bind` lines to `~/.config/hypr/bindings.lua` (Hyprland reloads on save). Combos you already use are skipped; Super+Z falls back to Super+Alt+Z, and so on. The plugin never unbinds someone else's shortcut.
 
 Undo/redo hit the plugin's `IpcHandler` (the service). `summon` opens the overlay. They are not interchangeable. The handler requires a third argument (use an empty string when the method needs no payload):
 
@@ -95,6 +95,7 @@ omarchy-shell io.github.chris.desktop-undo redo ''
 omarchy-shell io.github.chris.desktop-undo status ''
 omarchy-shell shell summon io.github.chris.desktop-undo
 omarchy-shell shell hide io.github.chris.desktop-undo
+omarchy-shell io.github.chris.desktop-undo installBinds ''
 ```
 
 The service registers an `IpcHandler` target of the same id. Those handlers take a string argument. `omarchy-shell shell call io.github.chris.desktop-undo <method> ''` also works: it invokes the overlay, which forwards to the service.

@@ -4,6 +4,7 @@ import qs.Commons
 import qs.Ui
 import "js/Journal.js" as Journal
 import "js/Config.js" as Config
+import "js/Binds.js" as Binds
 
 BarWidget {
   id: root
@@ -11,6 +12,8 @@ BarWidget {
 
   property int depth: 0
   property int redoDepth: 0
+  property bool offerBinds: false
+  property string offerNote: ""
 
   readonly property bool hideAtZero: {
     if (typeof setting === "function")
@@ -36,11 +39,18 @@ BarWidget {
     var snap = Journal.snapshot()
     root.depth = snap.depth
     root.redoDepth = snap.redoDepth
+    var offer = Binds.offer || {}
+    root.offerBinds = !!offer.needed
+    root.offerNote = String(offer.note || "Add Super+Z undo")
   }
 
-  visible: root.depth > 0 || !root.hideAtZero
-  implicitWidth: visible ? button.implicitWidth : 0
-  implicitHeight: button.implicitHeight
+  function installBinds() {
+    Quickshell.execDetached(["omarchy-shell", root.moduleName, "installBinds", ""])
+  }
+
+  visible: root.depth > 0 || !root.hideAtZero || root.offerBinds
+  implicitWidth: visible ? row.implicitWidth : 0
+  implicitHeight: row.implicitHeight
 
   Timer {
     interval: 250
@@ -49,19 +59,34 @@ BarWidget {
     onTriggered: root.refresh()
   }
 
-  WidgetButton {
-    id: button
-    anchors.fill: parent
-    bar: root.bar
-    text: root.depth > 0 ? ("↩ " + root.depth) : "↩"
-    tooltipText: root.depth > 0
-                 ? (root.depth + " action" + (root.depth === 1 ? "" : "s") + " to undo")
-                 : "Desktop Undo — nothing yet"
-    onPressed: function(buttonCode) {
-      if (buttonCode === Qt.LeftButton)
-        root.summonOverlay()
-      else if (buttonCode === Qt.RightButton)
-        root.undoLast()
+  Row {
+    id: row
+    spacing: Style.space(4)
+
+    WidgetButton {
+      id: button
+      bar: root.bar
+      text: root.depth > 0 ? ("↩ " + root.depth) : "↩"
+      tooltipText: root.depth > 0
+                   ? (root.depth + " action" + (root.depth === 1 ? "" : "s") + " to undo")
+                   : "Desktop Undo — nothing yet"
+      onPressed: function(buttonCode) {
+        if (buttonCode === Qt.LeftButton)
+          root.summonOverlay()
+        else if (buttonCode === Qt.RightButton)
+          root.undoLast()
+      }
+    }
+
+    WidgetButton {
+      visible: root.offerBinds
+      bar: root.bar
+      text: "keys"
+      tooltipText: root.offerNote.length ? root.offerNote : "Add Super+Z / Super+Y keybindings (skips combos you already use)"
+      onPressed: function(buttonCode) {
+        if (buttonCode === Qt.LeftButton)
+          root.installBinds()
+      }
     }
   }
 

@@ -11,6 +11,7 @@ import "js/Apps.js" as Apps
 import "js/Config.js" as Config
 import "js/Scrub.js" as Scrub
 import "js/Relaunch.js" as Relaunch
+import "js/Binds.js" as Binds
 
 Item {
   id: root
@@ -68,6 +69,8 @@ Item {
   property int journalRedoDepth: 0
   property var overlayEntries: []
   property bool scrubbing: false
+  property bool bindOfferNeeded: true
+  property string bindOfferNote: ""
 
   readonly property int debounceMs: 400
   readonly property int pollMs: 250
@@ -783,8 +786,51 @@ Item {
       probeIsBinary: root.probeIsBinary,
       hyprVersion: root.hyprVersion,
       socket: eventSock.connected || root.hyprlandEventsLive,
-      status: root.lastStatus
+      status: root.lastStatus,
+      bindOfferNeeded: root.bindOfferNeeded,
+      bindOfferNote: root.bindOfferNote
     })
+  }
+
+  function applyBindPlan(plan) {
+    var p = plan || Binds.offer
+    root.bindOfferNeeded = !!p.needed
+    root.bindOfferNote = String(p.note || "")
+    Binds.setOffer(p)
+    root.publish()
+  }
+
+  function scanBinds() {
+    enqueueWork(["hyprctl", "-j", "binds"], function(text, code) {
+      if (Number(code) !== 0)
+        return
+      root.applyBindPlan(Binds.applyScan(text))
+    })
+  }
+
+  function installBinds(arg) {
+    enqueueWork(["hyprctl", "-j", "binds"], function(text, code) {
+      if (Number(code) !== 0) {
+        root.bindOfferNote = "could not read keybinds"
+        root.publish()
+        return
+      }
+      var plan = Binds.applyScan(text)
+      if (!plan.toAdd || !plan.toAdd.length) {
+        root.applyBindPlan(plan)
+        return
+      }
+      var lua = Binds.luaBlock(plan.toAdd)
+      enqueueWork(["python3", root.pluginDir + "/compat/install-binds.py", root.pluginId, lua], function(out, instCode) {
+        if (Number(instCode) !== 0) {
+          root.bindOfferNote = "could not write ~/.config/hypr/bindings.lua"
+          root.publish()
+          return
+        }
+        Qt.callLater(root.scanBinds)
+      })
+    })
+    return "ok"
   }
 
   function undo(arg) { return root.runUndo() }
@@ -1061,6 +1107,14 @@ Item {
     onTriggered: root.finishBoot()
   }
 
+  Timer {
+    id: bindScanTimer
+    interval: 3000
+    repeat: true
+    running: true
+    onTriggered: root.scanBinds()
+  }
+
   IpcHandler {
     target: "io.github.chris.desktop-undo"
 
@@ -1075,6 +1129,7 @@ Item {
     function status(arg: string): string { return root.statusJson() }
     function journal(arg: string): string { return Journal.serialize() }
     function markFirstRun(arg: string): string { return root.markFirstRun(arg) }
+    function installBinds(arg: string): string { return root.installBinds(arg) }
   }
 
   Component.onCompleted: {
@@ -1082,6 +1137,7 @@ Item {
     probeWhichProc.running = true
     versionProc.running = true
     Qt.callLater(function() { root.requestClients("boot", {}) })
+    Qt.callLater(root.scanBinds)
     root.publish()
   }
 }

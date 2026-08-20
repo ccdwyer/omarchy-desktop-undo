@@ -48,6 +48,7 @@ const Executor = loadEngine("Executor.js")
 const Config = loadEngine("Config.js")
 const Scrub = loadEngine("Scrub.js")
 const Relaunch = loadEngine("Relaunch.js")
+const Binds = loadEngine("Binds.js")
 
 let passed = 0
 let failed = 0
@@ -442,6 +443,35 @@ test("ops lua dispatch maps pixel move and exec for hypr 0.56", () => {
     Ops.luaExecCmd("env FOO=1 true", 4),
     'hl.dsp.exec_cmd("env FOO=1 true", { workspace = "4" })'
   )
+})
+
+test("binds: empty live list offers preferred combos", () => {
+  const p = Binds.plan([])
+  assert.strictEqual(p.needed, true)
+  assert.strictEqual(p.toAdd.length, 3)
+  assert.strictEqual(p.toAdd[0].keys, "SUPER + Z")
+  assert.ok(Binds.luaBlock(p.toAdd).indexOf("o.bind(\"SUPER + Z\"") === 0)
+})
+
+test("binds: skips occupied combos and uses an alternate", () => {
+  const live = [
+    { modmask: 64, key: "Z", dispatcher: "exec", arg: "other", description: "Full screen" }
+  ]
+  const p = Binds.plan(live)
+  assert.strictEqual(p.needed, true)
+  const undo = p.toAdd.filter((x) => x.desc === "Desktop undo")[0]
+  assert.ok(undo)
+  assert.strictEqual(undo.chosen, "SUPER + ALT + Z")
+  assert.ok(p.note.indexOf("SUPER + ALT + Z") >= 0)
+})
+
+test("binds: already-ours hides the offer", () => {
+  const live = [
+    { modmask: 64, key: "Z", dispatcher: "__lua", arg: "15", description: "Desktop undo" }
+  ]
+  const p = Binds.plan(live)
+  assert.strictEqual(p.needed, false)
+  assert.strictEqual(p.already, 1)
 })
 
 test("settings: extra exclusions come from host inline settings", () => {
