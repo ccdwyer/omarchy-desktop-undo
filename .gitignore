@@ -8,6 +8,8 @@ src/undo-probe/target/
 .fix_prompt_r2.md
 .fix_prompt*
 .review_prompt.md
+.review_prompt3.md
+.review_prompt*
 .gpt_review_r1.md
 .gpt_review_r2.md
 .gpt_review*

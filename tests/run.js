@@ -46,6 +46,8 @@ const Ops = loadEngine("Ops.js")
 const Journal = loadEngine("Journal.js")
 const Executor = loadEngine("Executor.js")
 const Config = loadEngine("Config.js")
+const Scrub = loadEngine("Scrub.js")
+const Relaunch = loadEngine("Relaunch.js")
 
 let passed = 0
 let failed = 0
@@ -53,6 +55,7 @@ let failed = 0
 function test(name, fn) {
   try {
     Journal.reset()
+    Scrub.reset()
     fn()
     passed += 1
     process.stdout.write("ok  " + name + "\n")
@@ -456,6 +459,46 @@ test("executor: retarget rewrites queued restoration addresses", () => {
   Executor.retarget(st, "0xold", "0xnew", Ops.rewriteAddress)
   assert.strictEqual(st.queue[0].step.arg, "exact 10 20,address:0xnew")
   assert.strictEqual(st.queue[0].step.expectClients.address, "0xnew")
+})
+
+test("scrub: one desired target, next step is a single undo or redo", () => {
+  Journal.push({ type: "move", address: "0x1" })
+  Journal.push({ type: "move", address: "0x2" })
+  Journal.push({ type: "move", address: "0x3" })
+  assert.strictEqual(Journal.snapshot().cursor, 3)
+  Scrub.setDesired(1, 3, 3)
+  assert.strictEqual(Scrub.nextDirection(3), "undo")
+  assert.strictEqual(Scrub.snapshot().presentCursor, 3)
+  Scrub.setDesired(0, 3, 3)
+  assert.strictEqual(Scrub.nextDirection(3), "undo")
+  assert.strictEqual(Scrub.snapshot().desiredTarget, 0)
+  Journal.undo()
+  assert.strictEqual(Scrub.nextDirection(2), "undo")
+  Journal.undo()
+  Journal.undo()
+  assert.strictEqual(Scrub.nextDirection(0), "at-target")
+})
+
+test("scrub: cancel retargets the saved present; commit is deferred", () => {
+  Journal.push({ type: "float", address: "0x1" })
+  Journal.push({ type: "float", address: "0x2" })
+  Scrub.setDesired(0, 2, 2)
+  Scrub.requestCommit()
+  assert.strictEqual(Scrub.dismissKind(), "commit")
+  assert.strictEqual(Scrub.nextDirection(2), "undo")
+  Scrub.requestCancel()
+  assert.strictEqual(Scrub.snapshot().desiredTarget, 2)
+  assert.strictEqual(Scrub.dismissKind(), "cancel")
+  assert.strictEqual(Scrub.nextDirection(2), "at-target")
+})
+
+test("relaunch: missing metadata is unavailable, class is not an executable", () => {
+  assert.strictEqual(Relaunch.argvFor({ type: "close", appId: "kitty" }), null)
+  assert.strictEqual(Relaunch.unavailableReason({ type: "close", appId: "kitty" }), "relaunch unavailable")
+  assert.deepStrictEqual(
+    Relaunch.argvFor({ relaunch: { argv: ["/usr/bin/kitty", "--class", "demo"] } }),
+    ["/usr/bin/kitty", "--class", "demo"]
+  )
 })
 
 test("journal: firstRunShown persists in journal state, not a config file", () => {

@@ -9,6 +9,8 @@ import "js/Ops.js" as Ops
 import "js/Executor.js" as Executor
 import "js/Apps.js" as Apps
 import "js/Config.js" as Config
+import "js/Scrub.js" as Scrub
+import "js/Relaunch.js" as Relaunch
 
 Item {
   id: root
@@ -66,12 +68,10 @@ Item {
   property int journalRedoDepth: 0
   property var overlayEntries: []
   property bool scrubbing: false
-  property int scrubAnchor: -1
 
   readonly property int debounceMs: 400
   readonly property int pollMs: 250
   property string lastError: ""
-  property int scrubTarget: -1
 
   function publish() {
     var snap = Journal.snapshot()
@@ -257,6 +257,8 @@ Item {
         continue
       }
       if (Executor.isBusy(root.tx) && !root.scrubbing)
+        continue
+      if (Scrub.active && action.type !== "open")
         continue
       if (!Ops.shouldRecord(action, Apps, root.exclusions()))
         continue
@@ -449,8 +451,10 @@ Item {
       return
     }
     var pending = Executor.beginNext(root.tx, Date.now())
-    if (!pending)
+    if (!pending) {
+      root.advanceScrub()
       return
+    }
     root.executeStep(pending)
   }
 
@@ -467,7 +471,10 @@ Item {
       return
     }
     root.commitBatch(finished.meta)
-    root.kickExecutor()
+    if (Executor.isBusy(root.tx))
+      root.kickExecutor()
+    else
+      root.advanceScrub()
   }
 
   function commitBatch(meta) {
@@ -481,11 +488,6 @@ Item {
     persistTimer.restart()
     root.lastError = ""
     root.lastStatus = meta.direction || "ok"
-    if (root.scrubbing) {
-      var cursor = Journal.snapshot().cursor
-      if (root.scrubTarget < 0 || cursor === root.scrubTarget)
-        root.scrubbing = false
-    }
   }
 
   function failTransaction(reason) {
@@ -494,8 +496,6 @@ Item {
     cookieTimer.stop()
     root.pendingRelaunch = null
     Executor.fail(root.tx, reason || "fail")
-    root.scrubbing = false
-    root.scrubTarget = -1
     root.lastError = String(reason || "fail")
     root.lastStatus = "failed:" + root.lastError
     root.publish()
@@ -552,7 +552,11 @@ Item {
     var cookie = uuid()
     var relaunch = entry.relaunch || {}
     var cwd = relaunch.cwd || root.home
-    var argv = relaunch.argv && relaunch.argv.length ? relaunch.argv : [entry.appId || "true"]
+    var argv = Relaunch.argvFor(entry)
+    if (!argv || !argv.length) {
+      root.failTransaction(Relaunch.unavailableReason(entry) || "relaunch unavailable")
+      return
+    }
     var ws = entry.before ? Number(entry.before.workspace || 1) : 1
     var cmd = "[workspace " + ws + " silent] env DESKTOP_UNDO_COOKIE=" + cookie + " sh -c " + quote("cd \"$1\" && shift && exec \"$@\"") + " sh " + quote(cwd)
     for (var i = 0; i < argv.length; i++)
@@ -624,6 +628,8 @@ Item {
   function runUndo() {
     if (Executor.isBusy(root.tx))
       return "busy"
+    if (Scrub.active)
+      return root.runScrubTo(Journal.snapshot().cursor - 1)
     var entry = Journal.peekUndo()
     if (!entry)
       return "empty"
@@ -636,6 +642,8 @@ Item {
   function runRedo() {
     if (Executor.isBusy(root.tx))
       return "busy"
+    if (Scrub.active)
+      return root.runScrubTo(Journal.snapshot().cursor + 1)
     var entry = Journal.peekRedo()
     if (!entry)
       return "empty"
@@ -646,58 +654,105 @@ Item {
   }
 
   function runScrubTo(index) {
+    var snap = Journal.snapshot()
     var target = Number(index)
     if (isNaN(target))
       return "bad-index"
-    var snap = Journal.snapshot()
-    var current = snap.cursor
-    if (target === current)
-      return "ok"
-    if (Executor.isBusy(root.tx) && !root.scrubbing)
-      return "busy"
     if (target < 0)
       target = 0
     if (target > snap.entries.length)
       target = snap.entries.length
+    Scrub.setDesired(target, snap.entries.length, snap.cursor)
     root.scrubbing = true
-    root.scrubAnchor = snap.entries.length
-    root.scrubTarget = target
-    var i = current
-    while (i !== target) {
-      if (target < current) {
-        var u = snap.entries[i - 1]
-        if (!u)
-          break
-        Executor.enqueue(root.tx, Ops.inverseSteps(u), { entry: u, direction: "undo", batchId: "scrub-u-" + i })
-        i -= 1
-      } else {
-        var r = snap.entries[i]
-        if (!r)
-          break
-        Executor.enqueue(root.tx, Ops.redoSteps(r), { entry: r, direction: "redo", batchId: "scrub-r-" + i })
-        i += 1
-      }
-    }
     root.lastStatus = "scrub-pending"
-    root.kickExecutor()
+    root.publish()
+    if (!Executor.isBusy(root.tx))
+      root.advanceScrub()
     return "ok"
+  }
+
+  function advanceScrub() {
+    if (Executor.isBusy(root.tx))
+      return
+    if (!Scrub.active) {
+      root.scrubbing = false
+      return
+    }
+    var snap = Journal.snapshot()
+    var dir = Scrub.nextDirection(snap.cursor)
+    if (dir === "undo") {
+      var u = Journal.peekUndo()
+      if (!u) {
+        root.lastStatus = "failed:empty-undo"
+        return
+      }
+      root.lastStatus = "scrub-pending"
+      if (root.queueEntry(u, "undo"))
+        root.kickExecutor()
+      return
+    }
+    if (dir === "redo") {
+      var r = Journal.peekRedo()
+      if (!r) {
+        root.lastStatus = "failed:empty-redo"
+        return
+      }
+      root.lastStatus = "scrub-pending"
+      if (root.queueEntry(r, "redo"))
+        root.kickExecutor()
+      return
+    }
+    var pending = Scrub.dismissKind()
+    if (pending === "commit") {
+      Journal.commitPresent()
+      Scrub.reset()
+      root.scrubbing = false
+      root.lastStatus = "committed"
+      root.publish()
+      persistTimer.restart()
+      return
+    }
+    if (pending === "cancel") {
+      Scrub.reset()
+      root.scrubbing = false
+      root.lastStatus = "cancelled"
+      root.publish()
+      return
+    }
+    root.lastStatus = "scrub-idle"
+    root.publish()
   }
 
   function commitScrub() {
-    root.scrubbing = false
-    Journal.commitPresent()
+    if (!Scrub.active) {
+      Journal.commitPresent()
+      root.publish()
+      persistTimer.restart()
+      return "ok"
+    }
+    Scrub.requestCommit()
+    root.scrubbing = true
+    root.lastStatus = "commit-pending"
     root.publish()
-    persistTimer.restart()
-    return "ok"
+    if (!Executor.isBusy(root.tx))
+      root.advanceScrub()
+    return Executor.isBusy(root.tx) || Scrub.active ? "pending" : "ok"
   }
 
   function cancelScrub() {
-    if (!root.scrubbing)
-      return runScrubTo(Journal.snapshot().entries.length)
-    var present = Journal.snapshot().entries.length
-    runScrubTo(present)
-    root.scrubbing = false
-    return "ok"
+    var snap = Journal.snapshot()
+    if (!Scrub.active) {
+      if (snap.cursor !== snap.entries.length)
+        return root.runScrubTo(snap.entries.length)
+      return "ok"
+    }
+    Scrub.requestCancel()
+    root.scrubbing = true
+    root.lastStatus = "cancel-pending"
+    root.publish()
+    if (!Executor.isBusy(root.tx))
+      root.advanceScrub()
+    return Executor.isBusy(root.tx) || Scrub.active ? "pending" : "ok"
   }
 
   function persistNow() {
@@ -716,6 +771,10 @@ Item {
       cursor: snap.cursor,
       busy: Executor.isBusy(root.tx),
       lastError: root.lastError,
+      scrubbing: Scrub.active,
+      desiredTarget: Scrub.desiredTarget,
+      presentCursor: Scrub.presentCursor,
+      pendingCloseAction: Scrub.pendingCloseAction,
       probe: root.probeCmd,
       probeIsBinary: root.probeIsBinary,
       hyprVersion: root.hyprVersion,

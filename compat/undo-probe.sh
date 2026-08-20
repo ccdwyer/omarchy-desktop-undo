@@ -63,6 +63,28 @@ read_argv0() {
   tr '\0' '\n' < "$file" | head -n 1 | sed 's|.*/||; s/^-//'
 }
 
+# Full NUL-separated argv as a JSON array (matches the Rust helper).
+read_argv_json() {
+  pid="$1"
+  file="$PROC_ROOT/$pid/cmdline"
+  if [ ! -r "$file" ]; then
+    printf '[]'
+    return
+  fi
+  first=1
+  printf '['
+  tr '\0' '\n' < "$file" | while IFS= read -r arg || [ -n "$arg" ]; do
+    [ -z "$arg" ] && continue
+    if [ "$first" = 1 ]; then
+      first=0
+    else
+      printf ','
+    fi
+    printf '"%s"' "$(json_escape "$arg")"
+  done
+  printf ']'
+}
+
 read_cwd() {
   pid="$1"
   if [ -L "$PROC_ROOT/$pid/cwd" ]; then
@@ -133,8 +155,10 @@ cmd_pid() {
   cwd=$(read_cwd "$chosen")
   cmdline=$(read_cmdline "$chosen")
   window_cmd=$(read_cmdline "$pid")
-  printf '{"ok":true,"found":true,"pid":%s,"shellPid":%s,"cwd":"%s","cmdline":"%s","argv":["%s"],"windowArgv":["%s"],"windowCmdline":"%s"}\n' \
-    "$pid" "$chosen" "$(json_escape "$cwd")" "$(json_escape "$cmdline")" "$(json_escape "$(read_argv0 "$chosen")")" "$(json_escape "$(read_argv0 "$pid")")" "$(json_escape "$window_cmd")"
+  argv_json=$(read_argv_json "$chosen")
+  window_argv_json=$(read_argv_json "$pid")
+  printf '{"ok":true,"found":true,"pid":%s,"shellPid":%s,"cwd":"%s","cmdline":"%s","argv":%s,"windowArgv":%s,"windowCmdline":"%s"}\n' \
+    "$pid" "$chosen" "$(json_escape "$cwd")" "$(json_escape "$cmdline")" "$argv_json" "$window_argv_json" "$(json_escape "$window_cmd")"
 }
 
 cmd_cookie() {

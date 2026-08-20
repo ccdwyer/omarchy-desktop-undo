@@ -7,6 +7,7 @@ import qs.Commons
 import qs.Ui
 import "js/Journal.js" as Journal
 import "js/Apps.js" as Apps
+import "js/Scrub.js" as Scrub
 
 Item {
   id: root
@@ -22,6 +23,7 @@ Item {
   property var cards: []
   property bool firstRun: false
   property bool previewHint: false
+  property bool pendingDismiss: false
   property string pluginId: "io.github.chris.desktop-undo"
 
   property color background: Color.menu.background
@@ -63,9 +65,16 @@ Item {
   }
 
   function close() {
-    if (root.opened && root.liveCursor !== root.liveCount)
+    if (!root.opened)
+      return
+    var snap = Journal.snapshot()
+    if (Scrub.active || snap.cursor !== snap.entries.length) {
+      root.pendingDismiss = true
       root.callService("cancel", "")
+      return
+    }
     root.opened = false
+    root.pendingDismiss = false
   }
 
   function toggle() {
@@ -119,8 +128,13 @@ Item {
 
   function refresh() {
     var snap = Journal.snapshot()
-    root.liveCursor = snap.cursor
+    var scrub = Scrub.snapshot()
     root.liveCount = snap.entries.length
+    root.liveCursor = (scrub.active && scrub.desiredTarget >= 0) ? scrub.desiredTarget : snap.cursor
+    if (root.pendingDismiss && !scrub.active && snap.cursor === snap.entries.length) {
+      root.opened = false
+      root.pendingDismiss = false
+    }
     var list = []
     for (var i = 0; i < snap.entries.length; i++) {
       var e = snap.entries[i]
@@ -137,7 +151,7 @@ Item {
       })
     }
     root.cards = list
-    root.selectedIndex = Math.max(0, snap.cursor - 1)
+    root.selectedIndex = Math.max(0, root.liveCursor - 1)
     if (list.length === 0)
       root.selectedIndex = 0
   }
@@ -156,17 +170,14 @@ Item {
       next = 0
     if (next > root.liveCount)
       next = root.liveCount
-    if (next === root.liveCursor)
-      return
     root.callService("scrubTo", String(next))
-    root.liveCursor = next
-    root.selectedIndex = Math.max(0, next - 1)
     Qt.callLater(root.refresh)
   }
 
   function commitAndClose() {
+    root.pendingDismiss = true
     root.callService("commit", "")
-    root.opened = false
+    Qt.callLater(root.refresh)
   }
 
   function escapeOut() {
@@ -174,8 +185,9 @@ Item {
       root.dismissFirstRun()
       return
     }
+    root.pendingDismiss = true
     root.callService("cancel", "")
-    root.opened = false
+    Qt.callLater(root.refresh)
   }
 
   Process {
@@ -403,7 +415,7 @@ Item {
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
                   root.callService("scrubTo", String(card.index + 1))
-                  root.selectedIndex = card.index
+                  Qt.callLater(root.refresh)
                 }
                 onDoubleClicked: root.commitAndClose()
               }

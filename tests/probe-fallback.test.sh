@@ -16,6 +16,20 @@ write_proc() {
   printf '%s\n' "$kids" > "$FAKE/$pid/task/$pid/children"
 }
 
+write_nuls() {
+  pid="$1"
+  cwd="$2"
+  kids="$3"
+  shift 3
+  mkdir -p "$FAKE/$pid/task/$pid"
+  : > "$FAKE/$pid/cmdline"
+  for a in "$@"; do
+    printf '%s\0' "$a" >> "$FAKE/$pid/cmdline"
+  done
+  ln -s "$cwd" "$FAKE/$pid/cwd"
+  printf '%s\n' "$kids" > "$FAKE/$pid/task/$pid/children"
+}
+
 write_proc 100 "/usr/bin/kitty" "/usr/share/kitty" "101"
 write_proc 101 "bash" "/home/chris/projects/demo" "102"
 write_proc 102 "htop" "/home/chris/projects/demo" ""
@@ -38,5 +52,13 @@ printf '%s\n' "$out" | python3 -c 'import json,sys; json.loads(sys.stdin.read())
   exit 1
 }
 printf '%s\n' "$out" | grep -q '\\n' || { echo "newline not escaped: $out"; exit 1; }
+
+write_nuls 500 "/tmp" "" /usr/bin/kitty --class demo --title "hi there"
+out=$(sh "$ROOT/compat/undo-probe.sh" pid 500)
+printf '%s\n' "$out" | python3 -c '
+import json,sys
+d=json.loads(sys.stdin.read())
+assert d["windowArgv"] == ["/usr/bin/kitty","--class","demo","--title","hi there"], d["windowArgv"]
+' || { echo "windowArgv incomplete: $out"; exit 1; }
 
 echo "ok  probe-fallback"
