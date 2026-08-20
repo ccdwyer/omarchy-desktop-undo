@@ -1,0 +1,21 @@
+[
+  {
+    "address": "0xabc00001",
+    "mapped": true,
+    "hidden": false,
+    "at": [20, 40],
+    "size": [1200, 800],
+    "workspace": { "id": 2, "name": "2" },
+    "floating": false,
+    "monitor": 0,
+    "class": "firefox",
+    "title": "Mozilla Firefox",
+    "initialClass": "firefox",
+    "initialTitle": "Mozilla Firefox",
+    "pid": 8800,
+    "xwayland": false,
+    "pinned": false,
+    "fullscreen": 0,
+    "fullscreenClient": 0
+  }
+]

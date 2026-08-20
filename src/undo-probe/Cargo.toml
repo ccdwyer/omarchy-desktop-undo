@@ -1,0 +1,16 @@
+[package]
+name = "undo-probe"
+version = "1.0.0"
+edition = "2021"
+description = "Process-tree probe for Desktop Undo: deepest child-shell cwd and launch-cookie matching"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "undo-probe"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

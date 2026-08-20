@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.chris.desktop-undo",
+  "name": "Desktop Undo",
+  "version": "1.0.0",
+  "author": "chris",
+  "license": "MIT",
+  "description": "Super+Z for Hyprland: undo window closes, moves, floats, and workspace sends, with a scrubbable timeline of the last fifty actions.",
+  "kinds": ["service", "overlay", "bar-widget"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "overlay": "Overlay.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Desktop Undo",
+    "category": "Desktop",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

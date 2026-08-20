@@ -1,0 +1,3 @@
+activewindowv2>>64cea2525760
+fullscreen>>1
+fullscreen>>0

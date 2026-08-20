@@ -1,0 +1,3 @@
+activewindowv2>>64cea2525760
+openwindow>>64cea2525760,1,kitty,chris@omarchy: ~/projects/demo
+windowtitlev2>>64cea2525760,htop

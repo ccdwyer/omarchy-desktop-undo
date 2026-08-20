@@ -1,0 +1,21 @@
+[
+  {
+    "address": "0x64cea2525760",
+    "mapped": true,
+    "hidden": false,
+    "at": [0, 0],
+    "size": [1920, 1080],
+    "workspace": { "id": 1, "name": "1" },
+    "floating": false,
+    "monitor": 0,
+    "class": "kitty",
+    "title": "htop",
+    "initialClass": "kitty",
+    "initialTitle": "kitty",
+    "pid": 4400,
+    "xwayland": false,
+    "pinned": false,
+    "fullscreen": 2,
+    "fullscreenClient": 2
+  }
+]
