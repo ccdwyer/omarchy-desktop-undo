@@ -24,17 +24,30 @@ function isBusy(state) {
 function enqueue(state, steps, meta) {
     if (!state || !steps || !steps.length)
         return false
+    var info = meta || {}
+    if (!info.batchId)
+        info.batchId = "b-" + (state.generation + 1) + "-" + Date.now()
+    var added = 0
     for (var i = 0; i < steps.length; i++) {
         if (steps[i] && steps[i].kind === "skip")
             continue
         state.queue.push({
             step: steps[i],
-            meta: meta || {},
+            meta: info,
             enqueuedAt: Date.now()
         })
+        added += 1
+    }
+    if (added === 0) {
+        state.queue.push({
+            step: { kind: "noop" },
+            meta: info,
+            enqueuedAt: Date.now()
+        })
+        added = 1
     }
     state.busy = state.queue.length > 0 || !!state.pending
-    return state.queue.length > 0 || !!state.pending
+    return added > 0 || !!state.pending
 }
 
 function beginNext(state, now) {
@@ -70,8 +83,9 @@ function completePending(state, reason) {
         return null
     var finished = state.pending
     finished.done = true
-    finished.confirmed = reason === "event" || reason === "clients"
+    finished.confirmed = reason === "event" || reason === "clients" || reason === "dispatch"
     finished.reason = reason
+    state.lastFinished = finished
     state.pending = null
     if (!state.queue.length)
         state.busy = false
@@ -110,7 +124,32 @@ function tick(state, now) {
     var t = now === undefined || now === null ? Date.now() : now
     if (t < state.pending.timeoutAt)
         return null
-    return completePending(state, "timeout")
+    return fail(state, "timeout")
+}
+
+function fail(state, reason) {
+    if (!state)
+        return null
+    var finished = state.pending
+    if (finished) {
+        finished.done = true
+        finished.confirmed = false
+        finished.reason = reason || "fail"
+    } else {
+        finished = {
+            done: true,
+            confirmed: false,
+            reason: reason || "fail",
+            meta: {},
+            step: null
+        }
+    }
+    state.lastFinished = finished
+    state.lastError = reason || "fail"
+    state.pending = null
+    state.queue = []
+    state.busy = false
+    return finished
 }
 
 function cancel(state) {
@@ -119,6 +158,20 @@ function cancel(state) {
     state.queue = []
     state.pending = null
     state.busy = false
+}
+
+function batchRemaining(state, batchId) {
+    if (!state || !batchId)
+        return 0
+    var n = 0
+    if (state.pending && state.pending.meta && state.pending.meta.batchId === batchId)
+        n += 1
+    var q = state.queue || []
+    for (var i = 0; i < q.length; i++) {
+        if (q[i].meta && q[i].meta.batchId === batchId)
+            n += 1
+    }
+    return n
 }
 
 function _defaultMatch(parsed, expect) {

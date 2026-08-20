@@ -68,9 +68,10 @@ Item {
   property bool scrubbing: false
   property int scrubAnchor: -1
 
-  readonly property int debounceMs: 150
+  readonly property int debounceMs: 400
   readonly property int pollMs: 250
-  readonly property int idlePollMs: 1000
+  property string lastError: ""
+  property int scrubTarget: -1
 
   function publish() {
     var snap = Journal.snapshot()
@@ -131,16 +132,33 @@ Item {
     return "ok"
   }
 
-  function dispatchHypr(request) {
-    if (!request)
+  function isHyprctlFail(text, code) {
+    if (typeof code === "number" && code !== 0)
+      return true
+    var s = String(text || "").trim().toLowerCase()
+    if (!s || s === "ok")
       return false
-    try {
-      Hyprland.dispatch(request)
+    if (s.indexOf("unknown") >= 0 || s.indexOf("invalid") >= 0)
       return true
-    } catch (e) {
-      enqueueWork(["hyprctl", "dispatch"].concat(String(request).split(" ")), null)
+    if (s.indexOf("error") >= 0 || s.indexOf("failed") >= 0)
       return true
+    return false
+  }
+
+  function dispatchHypr(request, done) {
+    if (!request) {
+      if (done)
+        done(false, 1, "empty-dispatch")
+      return false
     }
+    enqueueWork(["hyprctl", "dispatch", request], function(text, code) {
+      var ok = !root.isHyprctlFail(text, code)
+      if (!ok)
+        root.failTransaction("hyprctl:" + String(code === undefined ? "err" : code))
+      if (done)
+        done(ok, code, text)
+    })
+    return true
   }
 
   function enqueueWork(command, done) {
@@ -188,7 +206,7 @@ Item {
     if (Executor.isBusy(root.tx)) {
       if (root.tx.pending && root.tx.pending.step && root.tx.pending.step.expectClients) {
         if (Executor.onClients(root.tx, clients, Ops.clientsMatch)) {
-          root.kickExecutor()
+          root.onStepFinished(root.tx.lastFinished)
           return
         }
       }
@@ -222,7 +240,6 @@ Item {
     }
     if (dirty) {
       root.dragging = true
-      pollTimer.interval = root.pollMs
       debounceTimer.restart()
     }
   }
@@ -402,8 +419,8 @@ Item {
     if (parsed.name === "activewindowv2" && parsed.fields && parsed.fields.address)
       root.lastActiveAddress = parsed.fields.address
 
-    if (Executor.shouldSuppressRecord(root.tx, parsed, Parser.eventMatchesExpected)) {
-      root.kickExecutor()
+    if (Executor.onEvent(root.tx, parsed, Parser.eventMatchesExpected)) {
+      root.onStepFinished(root.tx.lastFinished)
       return
     }
 
@@ -426,8 +443,10 @@ Item {
   }
 
   function kickExecutor() {
-    if (Executor.tick(root.tx, Date.now())) {
-      // timed out; continue the queue
+    var timed = Executor.tick(root.tx, Date.now())
+    if (timed) {
+      root.onStepFinished(timed)
+      return
     }
     var pending = Executor.beginNext(root.tx, Date.now())
     if (!pending)
@@ -435,23 +454,99 @@ Item {
     root.executeStep(pending)
   }
 
+  function onStepFinished(finished) {
+    if (!finished)
+      return
+    if (!finished.confirmed) {
+      root.failTransaction(finished.reason || "unconfirmed")
+      return
+    }
+    var batchId = finished.meta ? finished.meta.batchId : ""
+    if (batchId && Executor.batchRemaining(root.tx, batchId) > 0) {
+      root.kickExecutor()
+      return
+    }
+    root.commitBatch(finished.meta)
+    root.kickExecutor()
+  }
+
+  function commitBatch(meta) {
+    if (!meta)
+      return
+    if (meta.direction === "undo")
+      Journal.undo()
+    else if (meta.direction === "redo")
+      Journal.redo()
+    root.publish()
+    persistTimer.restart()
+    root.lastError = ""
+    root.lastStatus = meta.direction || "ok"
+    if (root.scrubbing) {
+      var cursor = Journal.snapshot().cursor
+      if (root.scrubTarget < 0 || cursor === root.scrubTarget)
+        root.scrubbing = false
+    }
+  }
+
+  function failTransaction(reason) {
+    confirmTimer.stop()
+    clientsConfirmTimer.stop()
+    cookieTimer.stop()
+    root.pendingRelaunch = null
+    Executor.fail(root.tx, reason || "fail")
+    root.scrubbing = false
+    root.scrubTarget = -1
+    root.lastError = String(reason || "fail")
+    root.lastStatus = "failed:" + root.lastError
+    root.publish()
+  }
+
+  function queueEntry(entry, direction) {
+    if (!entry)
+      return false
+    var steps = direction === "redo" ? Ops.redoSteps(entry) : Ops.inverseSteps(entry)
+    var queued = Executor.enqueue(root.tx, steps, { entry: entry, direction: direction })
+    if (queued)
+      return true
+    if (direction === "undo")
+      Journal.undo()
+    else if (direction === "redo")
+      Journal.redo()
+    root.publish()
+    persistTimer.restart()
+    return false
+  }
+
   function executeStep(pending) {
     var step = pending.step
     if (!step)
       return
-    if (step.kind === "relaunch")
+    if (step.kind === "relaunch") {
       root.executeRelaunch(pending)
-    else
-      dispatchHypr(Ops.dispatchString(step))
-    confirmTimer.restart()
-    clientsConfirmTimer.restart()
+      return
+    }
+    if (step.kind === "noop" || step.kind === "skip" || !step.dispatcher) {
+      var skipped = Executor.completePending(root.tx, "dispatch")
+      root.onStepFinished(skipped)
+      return
+    }
+    var req = Ops.dispatchString(step)
+    root.dispatchHypr(req, function(ok) {
+      if (!ok)
+        return
+      confirmTimer.restart()
+      clientsConfirmTimer.restart()
+      if (!step.expect && !step.expectClients) {
+        var finished = Executor.completePending(root.tx, "dispatch")
+        root.onStepFinished(finished)
+      }
+    })
   }
 
   function executeRelaunch(pending) {
     var entry = pending.meta && pending.meta.entry
     if (!entry) {
-      Executor.completePending(root.tx, "timeout")
-      root.kickExecutor()
+      root.failTransaction("relaunch-missing-entry")
       return
     }
     var cookie = uuid()
@@ -487,13 +582,20 @@ Item {
       Executor.retarget(root.tx, pending.oldAddress, live, Ops.rewriteAddress)
     }
     var entry = pending.entry
+    var meta = (root.tx.pending && root.tx.pending.meta) ? root.tx.pending.meta : { entry: entry, direction: "undo" }
+    var batchId = meta.batchId
     root.pendingRelaunch = null
     cookieTimer.stop()
     if (root.tx.pending && root.tx.pending.step && root.tx.pending.step.kind === "relaunch")
       Executor.completePending(root.tx, "event")
-    if (entry && live && !entry.multiWindow)
-      Executor.enqueue(root.tx, Ops.closeRestoreSteps(entry, live), { entry: entry, direction: "undo" })
-    root.kickExecutor()
+    if (entry && live && !entry.multiWindow) {
+      Executor.enqueue(root.tx, Ops.closeRestoreSteps(entry, live), {
+        entry: entry,
+        direction: meta.direction || "undo",
+        batchId: batchId
+      })
+    }
+    root.onStepFinished(root.tx.lastFinished)
   }
 
   function maybeMatchCookie(action) {
@@ -525,14 +627,10 @@ Item {
     var entry = Journal.peekUndo()
     if (!entry)
       return "empty"
-    Journal.undo()
-    root.publish()
-    persistTimer.restart()
-    var steps = Ops.inverseSteps(entry)
-    Executor.enqueue(root.tx, steps, { entry: entry, direction: "undo" })
-    root.kickExecutor()
-    root.lastStatus = "undo"
-    return "ok"
+    root.lastStatus = "undo-pending"
+    if (root.queueEntry(entry, "undo"))
+      root.kickExecutor()
+    return root.lastStatus.indexOf("failed:") === 0 ? root.lastStatus : "ok"
   }
 
   function runRedo() {
@@ -541,45 +639,46 @@ Item {
     var entry = Journal.peekRedo()
     if (!entry)
       return "empty"
-    Journal.redo()
-    root.publish()
-    persistTimer.restart()
-    var steps = Ops.redoSteps(entry)
-    Executor.enqueue(root.tx, steps, { entry: entry, direction: "redo" })
-    root.kickExecutor()
-    root.lastStatus = "redo"
-    return "ok"
+    root.lastStatus = "redo-pending"
+    if (root.queueEntry(entry, "redo"))
+      root.kickExecutor()
+    return root.lastStatus.indexOf("failed:") === 0 ? root.lastStatus : "ok"
   }
 
   function runScrubTo(index) {
     var target = Number(index)
     if (isNaN(target))
       return "bad-index"
-    var current = Journal.snapshot().cursor
+    var snap = Journal.snapshot()
+    var current = snap.cursor
     if (target === current)
       return "ok"
-    if (!root.scrubbing) {
-      root.scrubbing = true
-      root.scrubAnchor = Journal.snapshot().entries.length
-    }
-    var direction = target < current ? -1 : 1
-    while (Journal.snapshot().cursor !== target) {
-      if (direction < 0) {
-        var u = Journal.peekUndo()
+    if (Executor.isBusy(root.tx) && !root.scrubbing)
+      return "busy"
+    if (target < 0)
+      target = 0
+    if (target > snap.entries.length)
+      target = snap.entries.length
+    root.scrubbing = true
+    root.scrubAnchor = snap.entries.length
+    root.scrubTarget = target
+    var i = current
+    while (i !== target) {
+      if (target < current) {
+        var u = snap.entries[i - 1]
         if (!u)
           break
-        Journal.undo()
-        Executor.enqueue(root.tx, Ops.inverseSteps(u), { entry: u, direction: "undo" })
+        Executor.enqueue(root.tx, Ops.inverseSteps(u), { entry: u, direction: "undo", batchId: "scrub-u-" + i })
+        i -= 1
       } else {
-        var r = Journal.peekRedo()
+        var r = snap.entries[i]
         if (!r)
           break
-        Journal.redo()
-        Executor.enqueue(root.tx, Ops.redoSteps(r), { entry: r, direction: "redo" })
+        Executor.enqueue(root.tx, Ops.redoSteps(r), { entry: r, direction: "redo", batchId: "scrub-r-" + i })
+        i += 1
       }
     }
-    root.publish()
-    persistTimer.restart()
+    root.lastStatus = "scrub-pending"
     root.kickExecutor()
     return "ok"
   }
@@ -616,6 +715,7 @@ Item {
       redoDepth: snap.redoDepth,
       cursor: snap.cursor,
       busy: Executor.isBusy(root.tx),
+      lastError: root.lastError,
       probe: root.probeCmd,
       probeIsBinary: root.probeIsBinary,
       hyprVersion: root.hyprVersion,
@@ -784,16 +884,10 @@ Item {
 
   Timer {
     id: pollTimer
-    interval: root.idlePollMs
+    interval: root.pollMs
     repeat: true
     running: true
-    onTriggered: {
-      if (root.dragging)
-        interval = root.pollMs
-      else
-        interval = root.idlePollMs
-      root.requestClients("poll", { name: "geometry" })
-    }
+    onTriggered: root.requestClients("poll", { name: "geometry" })
   }
 
   Timer {
@@ -822,7 +916,7 @@ Item {
     onTriggered: {
       var timed = Executor.tick(root.tx, Date.now())
       if (timed)
-        root.kickExecutor()
+        root.onStepFinished(timed)
       else if (root.tx.pending)
         confirmTimer.restart()
     }
@@ -857,11 +951,8 @@ Item {
         return
       }
       if (Date.now() > pending.deadline) {
-        root.pendingRelaunch = null
-        if (root.tx.pending && root.tx.pending.step && root.tx.pending.step.kind === "relaunch")
-          Executor.completePending(root.tx, "timeout")
-        root.kickExecutor()
         stop()
+        root.failTransaction("cookie-timeout")
         return
       }
       enqueueWork([root.probeCommand(), "cookie", pending.cookie], function(text) {

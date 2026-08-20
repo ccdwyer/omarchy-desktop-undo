@@ -11,7 +11,7 @@ write_proc() {
   cwd="$3"
   kids="$4"
   mkdir -p "$FAKE/$pid/task/$pid"
-  printf '%s\0' $cmd > "$FAKE/$pid/cmdline"
+  printf '%s\0' "$cmd" > "$FAKE/$pid/cmdline"
   ln -s "$cwd" "$FAKE/$pid/cwd"
   printf '%s\n' "$kids" > "$FAKE/$pid/task/$pid/children"
 }
@@ -29,5 +29,14 @@ mkdir -p "$FAKE/state"
 sh "$ROOT/compat/undo-probe.sh" init-state "$FAKE/state" >/dev/null
 [ -f "$FAKE/state/journal.json" ] || { echo "journal not created"; exit 1; }
 [ ! -f "$FAKE/state/config.json" ] || { echo "config.json must not be created"; exit 1; }
+
+# Control characters in argv/cwd must not break JSON.
+write_proc 400 "$(printf 'foo\nbar')" "/tmp/quote\"here" ""
+out=$(sh "$ROOT/compat/undo-probe.sh" pid 400)
+printf '%s\n' "$out" | python3 -c 'import json,sys; json.loads(sys.stdin.read())' || {
+  echo "invalid JSON for control-char cmdline: $out"
+  exit 1
+}
+printf '%s\n' "$out" | grep -q '\\n' || { echo "newline not escaped: $out"; exit 1; }
 
 echo "ok  probe-fallback"

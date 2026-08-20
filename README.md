@@ -71,7 +71,7 @@ Close-undo for terminals walks `/proc/<pid>/task/*/children` to the deepest chil
 
 ## Settings
 
-Settings are inline on the `shell.json` entry. There is no plugin `config.json`. Defaults and schema live in `manifest.json`.
+Settings are inline on the `shell.json` entry. There is no plugin `config.json`. Widget `defaults` and `schema` live under `barWidget` in `manifest.json` (the Quattro shape). The service reads the same keys as injected QML properties.
 
 Bar chip (layout entry):
 
@@ -79,10 +79,10 @@ Bar chip (layout entry):
 { "id": "io.github.chris.desktop-undo", "hideChipAtZero": true }
 ```
 
-Service / overlay (`plugins[]` entry):
+Service (`plugins[]` entry — fields land on declared QML properties):
 
 ```json
-{ "id": "io.github.chris.desktop-undo", "hideChipAtZero": true, "extraExclusions": "my-secret-app" }
+{ "id": "io.github.chris.desktop-undo", "extraExclusions": "my-secret-app" }
 ```
 
 `hideChipAtZero` hides the bar chip when there is nothing to undo. `extraExclusions` is a comma-separated list of additional window classes that are never journaled.

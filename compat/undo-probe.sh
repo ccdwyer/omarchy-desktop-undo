@@ -8,8 +8,32 @@ set -eu
 PROC_ROOT="${UNDP_PROC_ROOT:-/proc}"
 
 json_escape() {
-  # shellcheck disable=SC2001
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'
+  printf '%s' "$1" | od -An -v -tx1 | awk '
+    BEGIN { ORS = "" }
+    function hex2dec(h,    i, d, v, c) {
+      v = 0
+      h = tolower(h)
+      for (i = 1; i <= length(h); i++) {
+        c = substr(h, i, 1)
+        if (c >= "0" && c <= "9") d = c + 0
+        else d = index("abcdef", c) + 9
+        v = v * 16 + d
+      }
+      return v
+    }
+    {
+      for (i = 1; i <= NF; i++) {
+        n = hex2dec($i)
+        if (n == 92) printf "\\\\"
+        else if (n == 34) printf "\\\""
+        else if (n == 10) printf "\\n"
+        else if (n == 13) printf "\\r"
+        else if (n == 9) printf "\\t"
+        else if (n < 32 || n == 127) printf "\\u00%02x", n
+        else printf "%c", n
+      }
+    }
+  '
 }
 
 is_shell() {

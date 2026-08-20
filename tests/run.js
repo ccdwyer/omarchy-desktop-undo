@@ -328,13 +328,36 @@ test("executor: matching event consumes pending and suppresses record", () => {
   assert.strictEqual(Executor.isBusy(st), false)
 })
 
-test("executor: timeout after 500ms continues", () => {
+test("executor: timeout is a failure and drops the rest of the queue", () => {
   const st = Executor.create()
-  Executor.enqueue(st, [{ dispatcher: "setfloating", arg: "address:0x1", expect: { name: "changefloatingmode" } }], {})
+  Executor.enqueue(st, [{ dispatcher: "setfloating", arg: "address:0x1", expect: { name: "changefloatingmode" } }], { batchId: "a" })
+  Executor.enqueue(st, [{ dispatcher: "settiled", arg: "address:0x1", expect: { name: "changefloatingmode" } }], { batchId: "b" })
   Executor.beginNext(st, 0)
   const timed = Executor.tick(st, 501)
   assert.ok(timed)
   assert.strictEqual(timed.reason, "timeout")
+  assert.strictEqual(timed.confirmed, false)
+  assert.strictEqual(st.queue.length, 0)
+  assert.strictEqual(Executor.isBusy(st), false)
+})
+
+test("executor: skip-only inverse still queues a noop batch", () => {
+  const st = Executor.create()
+  assert.ok(Executor.enqueue(st, [{ kind: "skip", dispatcher: null }], { direction: "undo", batchId: "skippy" }))
+  assert.strictEqual(st.queue[0].step.kind, "noop")
+})
+
+test("executor: fail aborts remaining steps", () => {
+  const st = Executor.create()
+  Executor.enqueue(st, [
+    { dispatcher: "movetoworkspacesilent", arg: "1,address:0x1", expect: { name: "movewindowv2" } },
+    { dispatcher: "setfloating", arg: "address:0x1", expect: { name: "changefloatingmode" } }
+  ], { batchId: "one" })
+  Executor.beginNext(st, 0)
+  const finished = Executor.fail(st, "hyprctl:1")
+  assert.strictEqual(finished.confirmed, false)
+  assert.strictEqual(st.queue.length, 0)
+  assert.strictEqual(Executor.batchRemaining(st, "one"), 0)
 })
 
 test("executor: clients-j confirmation", () => {

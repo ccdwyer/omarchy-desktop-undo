@@ -5,8 +5,12 @@ src/undo-probe/target/
 *.log
 .impl_prompt.md
 .fix_prompt_r1.md
+.fix_prompt_r2.md
+.fix_prompt*
 .review_prompt.md
 .gpt_review_r1.md
+.gpt_review_r2.md
+.gpt_review*
 .gpt_review_err.log
 .grok_impl.log
 .grok_fix_r1.log
