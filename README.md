@@ -7,7 +7,7 @@ This is an Omarchy shell plugin (service + overlay + bar-widget). It runs inside
 ## Install
 
 ```sh
-omarchy plugin add <git-url> --enable
+omarchy plugin add https://github.com/ccdwyer/omarchy-desktop-undo.git --enable
 ```
 
 That is the whole install. The plugin ships `compat/undo-probe.sh` and uses it automatically for process-tree / cookie matching. No compile step is required on a fresh machine.
