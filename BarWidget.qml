@@ -28,6 +28,10 @@ BarWidget {
     Quickshell.execDetached(["omarchy-shell", "shell", "summon", root.moduleName, "{}"])
   }
 
+  function undoLast() {
+    Quickshell.execDetached(["omarchy-shell", root.moduleName, "undo", ""])
+  }
+
   function refresh() {
     var snap = Journal.snapshot()
     root.depth = snap.depth
@@ -57,7 +61,7 @@ BarWidget {
       if (buttonCode === Qt.LeftButton)
         root.summonOverlay()
       else if (buttonCode === Qt.RightButton)
-        Quickshell.execDetached(["omarchy-shell", "shell", "call", root.moduleName, "undo", ""])
+        root.undoLast()
     }
   }
 

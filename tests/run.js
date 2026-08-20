@@ -417,13 +417,31 @@ test("ops table 100% type coverage for dispatch strings", () => {
     assert.ok(inv.length, type + " inverse empty")
     assert.ok(red.length, type + " redo empty")
     inv.concat(red).forEach((step) => {
-      if (step.kind === "skip")
+      if (step.kind === "skip" || step.kind === "relaunch")
         return
       const s = Ops.dispatchString(step)
       if (step.dispatcher)
         assert.ok(s.indexOf(step.dispatcher) === 0, s)
+      const lua = Ops.luaDispatch(step)
+      assert.ok(lua.indexOf("hl.dsp.") === 0, type + " lua: " + lua)
     })
   })
+})
+
+test("ops lua dispatch maps pixel move and exec for hypr 0.56", () => {
+  const move = Ops.inverseSteps({
+    type: "move",
+    address: "0x64cea2525760",
+    before: { x: 10, y: 20, w: 200, h: 100, floating: true },
+    after: { x: 30, y: 40, w: 200, h: 100, floating: true }
+  })[0]
+  const s = Ops.luaDispatch(move)
+  assert.ok(s.indexOf("hl.dsp.window.move({ x = 10, y = 20, relative = false") === 0, s)
+  assert.ok(s.indexOf('window = "address:0x64cea2525760"') >= 0, s)
+  assert.strictEqual(
+    Ops.luaExecCmd("env FOO=1 true", 4),
+    'hl.dsp.exec_cmd("env FOO=1 true", { workspace = "4" })'
+  )
 })
 
 test("settings: extra exclusions come from host inline settings", () => {

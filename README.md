@@ -36,12 +36,12 @@ omarchy-shell shell rescanPlugins
 
 The plugin does **not** write these into `hyprland.conf`. Bind them yourself.
 
-`call` invokes a method on the already-loaded service. `summon` opens the overlay. They are not interchangeable. `call` requires a third argument (use an empty string when the method needs no payload):
+Undo/redo hit the plugin's `IpcHandler` (the service). `summon` opens the overlay. They are not interchangeable. The handler requires a third argument (use an empty string when the method needs no payload):
 
 ```
-bind = SUPER, Z, exec, omarchy-shell shell call io.github.chris.desktop-undo undo ''
-bind = SUPER, Y, exec, omarchy-shell shell call io.github.chris.desktop-undo redo ''
-bind = SUPER SHIFT, Z, exec, omarchy-shell shell summon io.github.chris.desktop-undo '{}'
+bind = SUPER, Z, exec, omarchy-shell io.github.chris.desktop-undo undo ''
+bind = SUPER, Y, exec, omarchy-shell io.github.chris.desktop-undo redo ''
+bind = SUPER SHIFT, Z, exec, omarchy-shell shell summon io.github.chris.desktop-undo
 ```
 
 If a bind collides, click the bar chip. It always summons the overlay.
@@ -90,14 +90,14 @@ Service (`plugins[]` entry — fields land on declared QML properties):
 ## IPC
 
 ```sh
-omarchy-shell shell call io.github.chris.desktop-undo undo ''
-omarchy-shell shell call io.github.chris.desktop-undo redo ''
-omarchy-shell shell call io.github.chris.desktop-undo status ''
-omarchy-shell shell summon io.github.chris.desktop-undo '{}'
+omarchy-shell io.github.chris.desktop-undo undo ''
+omarchy-shell io.github.chris.desktop-undo redo ''
+omarchy-shell io.github.chris.desktop-undo status ''
+omarchy-shell shell summon io.github.chris.desktop-undo
 omarchy-shell shell hide io.github.chris.desktop-undo
 ```
 
-The service also registers an `IpcHandler` target of the same id. Those handlers take a string argument so they match `shell call <id> <method> <arg>`.
+The service registers an `IpcHandler` target of the same id. Those handlers take a string argument. `omarchy-shell shell call io.github.chris.desktop-undo <method> ''` also works: it invokes the overlay, which forwards to the service.
 
 ## Tests (off-device)
 

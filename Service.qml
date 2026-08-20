@@ -530,7 +530,11 @@ Item {
       root.onStepFinished(skipped)
       return
     }
-    var req = Ops.dispatchString(step)
+    var req = Ops.luaDispatch(step)
+    if (!req) {
+      root.failTransaction("unsupported-dispatch:" + String(step.dispatcher || step.kind || "none"))
+      return
+    }
     root.dispatchHypr(req, function(ok) {
       if (!ok)
         return
@@ -558,7 +562,7 @@ Item {
       return
     }
     var ws = entry.before ? Number(entry.before.workspace || 1) : 1
-    var cmd = "[workspace " + ws + " silent] env DESKTOP_UNDO_COOKIE=" + cookie + " sh -c " + quote("cd \"$1\" && shift && exec \"$@\"") + " sh " + quote(cwd)
+    var cmd = "env DESKTOP_UNDO_COOKIE=" + cookie + " sh -c " + quote("cd \"$1\" && shift && exec \"$@\"") + " sh " + quote(cwd)
     for (var i = 0; i < argv.length; i++)
       cmd += " " + quote(argv[i])
     root.pendingRelaunch = {
@@ -570,7 +574,7 @@ Item {
       deadline: Date.now() + 5000,
       pids: []
     }
-    dispatchHypr("exec " + cmd)
+    dispatchHypr(Ops.luaExecCmd(cmd, ws))
     cookieTimer.restart()
   }
 
@@ -805,7 +809,7 @@ Item {
       id: workOut
       waitForEnd: true
     }
-    onExited: {
+    onExited: function(exitCode) {
       var text = workOut.text
       var job = root.workCurrent
       root.workCurrent = null
