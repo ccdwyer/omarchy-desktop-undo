@@ -474,6 +474,15 @@ test("binds: already-ours hides the offer", () => {
   assert.strictEqual(p.already, 1)
 })
 
+test("binds: notify body lists assigned keys", () => {
+  const body = Binds.notifyBody([{ chosen: "SUPER + Z", desc: "Desktop undo" }], [])
+  assert.ok(body.indexOf("SUPER + Z — Desktop undo") === 0)
+  const argv = Binds.notifyArgv("Desktop Undo", "Desktop Undo keybindings", body)
+  assert.strictEqual(argv[0], "omarchy")
+  assert.strictEqual(argv[1], "notification")
+  assert.strictEqual(argv[2], "send")
+})
+
 test("settings: extra exclusions come from host inline settings", () => {
   var excl = Config.extraExclusionsFrom({ extraExclusions: "secret-app, other" })
   assert.ok(excl.indexOf("secret-app") >= 0)

@@ -59,6 +59,6 @@ Injected properties such as `omarchyPath`, `shell`, `manifest`, `pluginRegistry`
 ## Out of scope (intentional)
 
 - Tiled swap undo (tribunal cut).
-- Writing Hyprland config except an opt-in `Add keybindings` control that appends a marked `o.bind` block to `~/.config/hypr/bindings.lua` after checking `hyprctl -j binds`. Occupied combos are skipped or replaced with Super+Alt variants. Never `hl.unbind`.
+- Writing Hyprland config: on first load the service assigns a free combo (never an occupied Omarchy hotkey) into a marked `o.bind` block in `~/.config/hypr/bindings.lua`, then `omarchy notification send`s the assigned keys. Never `hl.unbind`. No notify once binds are already live.
 - A second Quickshell process.
 - Network, accounts, telemetry.

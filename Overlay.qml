@@ -502,34 +502,11 @@ Item {
 
         Text {
           width: parent.width
-          text: Binds.offer && Binds.offer.needed
-                ? ("No Desktop Undo keys yet.\n\nPreferred: Super+Z undo · Super+Y redo · Super+Shift+Z timeline.\nCombos you already use are skipped.\n\n" + String((Binds.offer && Binds.offer.note) || ""))
-                : "Super+Z undo · Super+Y redo · Super+Shift+Z timeline.\nThe bar chip still opens this overlay."
+          text: "Super+Z undo · Super+Y redo · Super+Shift+Z timeline.\nThe plugin assigns a free combo on first load and notifies you. Occupied Omarchy hotkeys are skipped.\nThe bar chip still opens this overlay."
           color: root.foreground
           wrapMode: Text.WordWrap
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
-        }
-
-        Rectangle {
-          visible: !!(Binds.offer && Binds.offer.needed)
-          width: bindLabel.implicitWidth + Style.space(16)
-          height: bindLabel.implicitHeight + Style.space(10)
-          radius: Math.max(4, root.cornerRadius / 2)
-          color: root.accent
-          Text {
-            id: bindLabel
-            anchors.centerIn: parent
-            text: "Add keybindings"
-            color: root.background
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.callService("installBinds", "")
-          }
         }
 
         Text {

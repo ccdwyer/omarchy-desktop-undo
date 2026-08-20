@@ -34,7 +34,7 @@ omarchy-shell shell rescanPlugins
 | Super+Y | Redo |
 | Super+Shift+Z | Open timeline overlay |
 
-If none of those keys are bound yet, the overlay first-run card and a **keys** chip on the bar offer **Add keybindings**. That writes `o.bind` lines to `~/.config/hypr/bindings.lua` (Hyprland reloads on save). Combos you already use are skipped; Super+Z falls back to Super+Alt+Z, and so on. The plugin never unbinds someone else's shortcut.
+On first load the plugin writes those binds to `~/.config/hypr/bindings.lua` if the combos are free, then pops an Omarchy notification with the keys it assigned. Occupied shortcuts (including stock Omarchy hotkeys) are skipped or replaced with Super+Alt variants. It never unbinds someone else's key, and it will not notify again once its binds are already live.
 
 Undo/redo hit the plugin's `IpcHandler` (the service). `summon` opens the overlay. They are not interchangeable. The handler requires a third argument (use an empty string when the method needs no payload):
 
