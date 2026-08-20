@@ -64,6 +64,7 @@ read_argv0() {
 }
 
 # Full NUL-separated argv as a JSON array (matches the Rust helper).
+# Arguments may contain newlines; only 0x00 splits entries.
 read_argv_json() {
   pid="$1"
   file="$PROC_ROOT/$pid/cmdline"
@@ -71,18 +72,52 @@ read_argv_json() {
     printf '[]'
     return
   fi
-  first=1
-  printf '['
-  tr '\0' '\n' < "$file" | while IFS= read -r arg || [ -n "$arg" ]; do
-    [ -z "$arg" ] && continue
-    if [ "$first" = 1 ]; then
-      first=0
-    else
-      printf ','
-    fi
-    printf '"%s"' "$(json_escape "$arg")"
-  done
-  printf ']'
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys
+parts=[p.decode("utf-8","replace") for p in open(sys.argv[1],"rb").read().split(b"\0") if p]
+sys.stdout.write(json.dumps(parts))' "$file"
+    return
+  fi
+  od -An -v -tx1 "$file" | awk '
+    BEGIN { ORS = ""; first = 1; a = ""; started = 0; printf "[" }
+    function hex2dec(h,    i, d, v, c) {
+      v = 0
+      h = tolower(h)
+      for (i = 1; i <= length(h); i++) {
+        c = substr(h, i, 1)
+        if (c >= "0" && c <= "9") d = c + 0
+        else d = index("abcdef", c) + 9
+        v = v * 16 + d
+      }
+      return v
+    }
+    function esc(n) {
+      if (n == 92) return "\\\\"
+      if (n == 34) return "\\\""
+      if (n == 10) return "\\n"
+      if (n == 13) return "\\r"
+      if (n == 9) return "\\t"
+      if (n < 32 || n == 127) return sprintf("\\u00%02x", n)
+      return sprintf("%c", n)
+    }
+    function flush() {
+      if (!started) return
+      if (!first) printf ","
+      first = 0
+      printf "\"%s\"", a
+      a = ""
+      started = 0
+    }
+    {
+      for (i = 1; i <= NF; i++) {
+        n = hex2dec($i)
+        if (n == 0) { flush(); continue }
+        started = 1
+        a = a esc(n)
+      }
+    }
+    END { flush(); printf "]" }
+  '
 }
 
 read_cwd() {

@@ -61,4 +61,12 @@ d=json.loads(sys.stdin.read())
 assert d["windowArgv"] == ["/usr/bin/kitty","--class","demo","--title","hi there"], d["windowArgv"]
 ' || { echo "windowArgv incomplete: $out"; exit 1; }
 
+write_nuls 600 "/tmp" "" /usr/bin/kitty "$(printf 'a\nb')"
+out=$(sh "$ROOT/compat/undo-probe.sh" pid 600)
+printf '%s\n' "$out" | python3 -c '
+import json,sys
+d=json.loads(sys.stdin.read())
+assert d["windowArgv"] == ["/usr/bin/kitty","a\nb"], d["windowArgv"]
+' || { echo "newline argv split incorrectly: $out"; exit 1; }
+
 echo "ok  probe-fallback"

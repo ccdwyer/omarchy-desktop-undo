@@ -25,6 +25,8 @@ function reset() {
 }
 
 function setDesired(target, entryCount, currentCursor) {
+    if (pendingCloseAction)
+        return snapshot()
     var count = Number(entryCount) || 0
     var t = Number(target)
     if (isNaN(t))

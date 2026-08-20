@@ -479,6 +479,17 @@ test("scrub: one desired target, next step is a single undo or redo", () => {
   assert.strictEqual(Scrub.nextDirection(0), "at-target")
 })
 
+test("scrub: pending dismiss ignores later setDesired", () => {
+  Journal.push({ type: "move", address: "0x1" })
+  Journal.push({ type: "move", address: "0x2" })
+  Scrub.setDesired(0, 2, 2)
+  assert.strictEqual(Scrub.snapshot().desiredTarget, 0)
+  Scrub.requestCommit()
+  Scrub.setDesired(2, 2, 2)
+  assert.strictEqual(Scrub.snapshot().desiredTarget, 0)
+  assert.strictEqual(Scrub.dismissKind(), "commit")
+})
+
 test("scrub: cancel retargets the saved present; commit is deferred", () => {
   Journal.push({ type: "float", address: "0x1" })
   Journal.push({ type: "float", address: "0x2" })

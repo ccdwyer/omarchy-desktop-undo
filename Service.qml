@@ -893,12 +893,6 @@ Item {
         reconnectTimer.start()
       }
     }
-    onError: {
-      if (!root.hyprlandEventsLive) {
-        reconnectTimer.interval = root.socketBackoffMs
-        reconnectTimer.start()
-      }
-    }
   }
 
   Connections {

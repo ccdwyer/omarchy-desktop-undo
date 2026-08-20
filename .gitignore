@@ -1,5 +1,6 @@
 bin/undo-probe
 src/undo-probe/target/
+**/target/
 .DS_Store
 *.swp
 *.log
@@ -13,6 +14,8 @@ src/undo-probe/target/
 .gpt_review_r1.md
 .gpt_review_r2.md
 .gpt_review*
+.gpt_review_r3.md
+.gpt_review_r4.md
 .gpt_review_err.log
 .grok_impl.log
 .grok_fix_r1.log
