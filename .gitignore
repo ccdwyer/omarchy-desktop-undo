@@ -22,3 +22,5 @@ src/undo-probe/target/
 .grok_*
 .code-review-graph/
 .serena/
+__pycache__/
+*.pyc
